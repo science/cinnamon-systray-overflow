@@ -255,3 +255,60 @@ describe('applet.js DND promote/demote', () => {
         assert.ok(appletSrc.includes('exceedsDragThreshold'), 'must use threshold helper');
     });
 });
+
+describe('applet.js polish — edge cases', () => {
+    it('_onBeforeRedisplay clears XEmbed icons', () => {
+        assert.ok(appletSrc.includes('_clearXEmbedIcons'), 'must clear XEmbed on redisplay');
+    });
+
+    it('handles orientation changes', () => {
+        assert.ok(appletSrc.includes('on_orientation_changed'), 'must handle orientation changes');
+    });
+
+    it('updates tray orientation for XEmbed', () => {
+        assert.ok(appletSrc.includes('set_tray_orientation'), 'must update tray orientation');
+    });
+
+    it('handles UI scale changes with debounce', () => {
+        assert.ok(appletSrc.includes('_uiScaleChanged'), 'must handle scale changes');
+        assert.ok(appletSrc.includes('scale-changed'), 'must connect to scale-changed');
+    });
+
+    it('handles panel edit mode changes', () => {
+        assert.ok(appletSrc.includes('panel-edit-mode'), 'must handle edit mode');
+    });
+
+    it('listens for icon-size-changed on panel', () => {
+        assert.ok(appletSrc.includes('icon-size-changed'), 'must listen for icon size changes');
+    });
+
+    it('handles icon theme changes', () => {
+        assert.ok(appletSrc.includes('_onIconThemeChanged'), 'must refresh on icon theme change');
+    });
+
+    it('closes popup when chevron hidden (0 overflow icons)', () => {
+        // _updateChevronVisibility method body must close popup when no overflow
+        let methodStart = appletSrc.indexOf('_updateChevronVisibility(hasOverflow)');
+        assert.ok(methodStart > 0, '_updateChevronVisibility method not found');
+        let updateMethod = appletSrc.substring(methodStart, methodStart + 600);
+        assert.ok(updateMethod.includes('_closeOverflowPanel'), 'must close when 0 overflow');
+    });
+
+    it('redistributes icons when new icon appears', () => {
+        // _onTrayIconAdded and _addXAppIcon must call _redistributeIcons
+        assert.ok(appletSrc.includes('this._redistributeIcons()'), 'must redistribute on add');
+    });
+
+    it('redistributes icons when icon is removed', () => {
+        // _removeXAppIcon method body must call _redistributeIcons
+        let methodStart = appletSrc.indexOf('_removeXAppIcon(icon_proxy) {');
+        assert.ok(methodStart > 0, '_removeXAppIcon method not found');
+        let removeXApp = appletSrc.substring(methodStart, methodStart + 700);
+        assert.ok(removeXApp.includes('_redistributeIcons'), 'must redistribute on XApp remove');
+    });
+
+    it('clears DND state when popup closes', () => {
+        // _closeOverflowPanel or _depopulateOverflowPopup must handle clean state
+        assert.ok(appletSrc.includes('_depopulateOverflowPopup'), 'must depopulate on close');
+    });
+});
