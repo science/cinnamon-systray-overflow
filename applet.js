@@ -982,6 +982,15 @@ class SystrayOverflowApplet extends Applet.Applet {
 
         this._overflowPanel.set_child(innerBox);
         this._overflowPanel._delegate = this;
+
+        // DND event handlers on the popup panel
+        this._overflowPanel.connect('button-press-event',
+            (actor, event) => this._onPopupButtonPress(actor, event));
+        this._overflowPanel.connect('button-release-event',
+            (actor, event) => this._onPopupButtonRelease(actor, event));
+        this._overflowPanel.connect('motion-event',
+            (actor, event) => this._onPopupMotion(actor, event));
+
         global.stage.add_child(this._overflowPanel);
     }
 
@@ -1176,6 +1185,232 @@ class SystrayOverflowApplet extends Applet.Applet {
 
     _setIconOrder(orderArray) {
         this.settings.setValue('icon-order', orderArray);
+    }
+
+    /**
+     * Find which managed icon owns the given actor (or is an ancestor of it).
+     * Returns the managed icon entry or null.
+     */
+    _findManagedIconForActor(actor) {
+        for (let [id, managed] of this._managedIcons) {
+            if (managed.actor === actor || managed.actor.contains(actor)) {
+                return managed;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Find which section an actor belongs to: "panel" or "overflow" or null.
+     */
+    _findActorSection(actor) {
+        if (this._overflowVisibleSection && this._overflowVisibleSection.contains(actor)) {
+            return 'panel';
+        }
+        if (this._overflowOverflowSection && this._overflowOverflowSection.contains(actor)) {
+            return 'overflow';
+        }
+        return null;
+    }
+
+    /**
+     * Handle button-press in the overflow popup.
+     * Records the press position and source icon for deferred forwarding.
+     */
+    _onPopupButtonPress(actor, event) {
+        let [x, y] = event.get_coords();
+        let source = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
+        let managed = this._findManagedIconForActor(source);
+
+        if (!managed) return Clutter.EVENT_PROPAGATE;
+
+        this._dndActive = false;
+        this._dndStartX = x;
+        this._dndStartY = y;
+        this._dndSource = managed;
+        this._dndSourceSection = this._findActorSection(managed.actor);
+        this._dndPressEvent = event;
+        this._dndDragging = false;
+
+        // Don't forward yet — wait to see if this becomes a drag
+        return Clutter.EVENT_STOP;
+    }
+
+    /**
+     * Handle motion in the overflow popup during a potential drag.
+     * If movement exceeds threshold, start visual drag feedback.
+     */
+    _onPopupMotion(actor, event) {
+        if (!this._dndSource) return Clutter.EVENT_PROPAGATE;
+
+        let [x, y] = event.get_coords();
+
+        if (!this._dndDragging) {
+            if (helpers.exceedsDragThreshold(this._dndStartX, this._dndStartY, x, y, DRAG_THRESHOLD)) {
+                this._dndDragging = true;
+                // Visual feedback: make source semi-transparent
+                this._dndSource.actor.opacity = 128;
+            }
+        }
+
+        if (this._dndDragging) {
+            // Highlight which section the cursor is over
+            this._updateDropHighlight(x, y);
+        }
+
+        return Clutter.EVENT_STOP;
+    }
+
+    /**
+     * Handle button-release in the overflow popup.
+     * If drag was active: handle the drop (promote/demote/reorder).
+     * If no drag: forward as a normal click to the icon.
+     */
+    _onPopupButtonRelease(actor, event) {
+        if (!this._dndSource) return Clutter.EVENT_PROPAGATE;
+
+        let managed = this._dndSource;
+        let wasDragging = this._dndDragging;
+
+        // Reset drag state
+        managed.actor.opacity = 255;
+        this._clearDropHighlight();
+        this._dndSource = null;
+        this._dndDragging = false;
+
+        if (wasDragging) {
+            // Handle the drop
+            let [x, y] = event.get_coords();
+            this._handleDrop(managed, x, y);
+            return Clutter.EVENT_STOP;
+        } else {
+            // Forward as normal click — close the popup first, then let the
+            // icon handle the event naturally. For XApp icons, we call
+            // the proxy methods directly. For XEmbed, we use handle_event.
+            this._closeOverflowPanel();
+
+            if (managed.protocol === 'xapp' && managed.xappIcon) {
+                let xappIcon = managed.xappIcon;
+                let [px, py, po] = xappIcon.getEventPositionInfo(managed.actor);
+                let button = event.get_button();
+                let time = event.get_time();
+                xappIcon.proxy.call_button_press(px, py, button, time, po, null, null);
+                xappIcon.proxy.call_button_release(px, py, button, time, po, null, null);
+            } else if (managed.protocol === 'xembed') {
+                // For XEmbed, forward the original press + this release
+                let icon = managed.actor.child;
+                if (icon && !icon.is_finalized()) {
+                    let etype = event.type();
+                    icon.handle_event(Clutter.EventType.BUTTON_PRESS, this._dndPressEvent || event);
+                    icon.handle_event(etype, event);
+                }
+            }
+            this._dndPressEvent = null;
+            return Clutter.EVENT_STOP;
+        }
+    }
+
+    /**
+     * Process a drop after DND: promote, demote, or reorder.
+     */
+    _handleDrop(managed, dropX, dropY) {
+        let targetSection = this._getDropSection(dropX, dropY);
+        let sourceSection = this._dndSourceSection || 'panel';
+
+        if (targetSection === sourceSection && targetSection === 'panel') {
+            // Reorder within panel section
+            let panelIcons = this._getPanelIconOrder();
+            let bounds = this._getSectionIconBounds(this._overflowVisibleSection);
+            // Convert drop coords to section-relative
+            let [sx, sy] = this._overflowVisibleSection.get_transformed_position();
+            let relX = dropX - sx;
+            let relY = dropY - sy;
+            let newIndex = helpers.findClosestIconIndex(bounds, relX, relY);
+            let newOrder = helpers.reorderIcon(panelIcons, managed.id, newIndex);
+            this._setIconOrder(newOrder);
+        } else if (targetSection !== sourceSection) {
+            // Move between sections: promote or demote
+            this._setIconVisibility(managed.id, targetSection);
+
+            // If promoting to panel, add to icon-order
+            if (targetSection === 'panel') {
+                let order = this.iconOrder || [];
+                if (!order.includes(managed.id)) {
+                    order.push(managed.id);
+                    this._setIconOrder(order);
+                }
+            }
+        }
+        // _redistributeIcons will be triggered by settings change callback
+    }
+
+    /**
+     * Determine which section a drop coordinate falls in.
+     */
+    _getDropSection(x, y) {
+        if (!this._overflowOverflowSection) return 'panel';
+
+        let [, oy] = this._overflowOverflowSection.get_transformed_position();
+        return y >= oy ? 'overflow' : 'panel';
+    }
+
+    /**
+     * Get current panel icon IDs in order.
+     */
+    _getPanelIconOrder() {
+        let allIcons = Array.from(this._managedIcons.values());
+        let { panel } = helpers.classifyIcons(
+            allIcons,
+            this.iconVisibility || {},
+            this.defaultVisibility || 'panel',
+            this.iconOrder || []
+        );
+        return panel.map(i => i.id);
+    }
+
+    /**
+     * Get bounding boxes of icons in a section container (section-relative coords).
+     */
+    _getSectionIconBounds(section) {
+        if (!section) return [];
+        let children = section.get_children();
+        let bounds = [];
+        for (let child of children) {
+            if (!child.visible) continue;
+            let alloc = child.get_allocation_box();
+            bounds.push({
+                x: alloc.x1,
+                y: alloc.y1,
+                width: alloc.x2 - alloc.x1,
+                height: alloc.y2 - alloc.y1
+            });
+        }
+        return bounds;
+    }
+
+    /**
+     * Update visual highlight to indicate which section is the drop target.
+     */
+    _updateDropHighlight(x, y) {
+        this._clearDropHighlight();
+        let section = this._getDropSection(x, y);
+        if (section === 'panel' && this._overflowVisibleSection) {
+            this._overflowVisibleSection.add_style_class_name('systray-overflow-drop-highlight');
+        } else if (section === 'overflow' && this._overflowOverflowSection) {
+            this._overflowOverflowSection.add_style_class_name('systray-overflow-drop-highlight');
+        }
+    }
+
+    /**
+     * Remove drop highlight from both sections.
+     */
+    _clearDropHighlight() {
+        if (this._overflowVisibleSection) {
+            this._overflowVisibleSection.remove_style_class_name('systray-overflow-drop-highlight');
+        }
+        if (this._overflowOverflowSection) {
+            this._overflowOverflowSection.remove_style_class_name('systray-overflow-drop-highlight');
+        }
     }
 }
 

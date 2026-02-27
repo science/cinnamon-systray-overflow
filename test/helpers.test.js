@@ -1,6 +1,7 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
-const { classifyIcons, xappProxyToId, dropTargetSection, calcOverflowPanelPosition } = require('../helpers');
+const { classifyIcons, xappProxyToId, dropTargetSection, calcOverflowPanelPosition,
+        exceedsDragThreshold, findClosestIconIndex, reorderIcon } = require('../helpers');
 
 describe('classifyIcons', () => {
     it('puts all icons in panel when no prefs and default is panel', () => {
@@ -149,5 +150,102 @@ describe('calcOverflowPanelPosition', () => {
         let panelSize = { width: 200, height: 100 };
         let [x, y] = calcOverflowPanelPosition(alloc, panelSize, mon, 'bottom');
         assert.equal(x, 1920); // clamped to monitor.x
+    });
+});
+
+describe('exceedsDragThreshold', () => {
+    it('returns false when movement is below threshold', () => {
+        assert.equal(exceedsDragThreshold(100, 100, 105, 103, 8), false);
+    });
+
+    it('returns true when movement exceeds threshold', () => {
+        assert.equal(exceedsDragThreshold(100, 100, 110, 100, 8), true);
+    });
+
+    it('returns true when movement equals threshold', () => {
+        assert.equal(exceedsDragThreshold(0, 0, 8, 0, 8), true);
+    });
+
+    it('uses Euclidean distance (diagonal)', () => {
+        // sqrt(6^2 + 6^2) = sqrt(72) ~= 8.49 > 8
+        assert.equal(exceedsDragThreshold(0, 0, 6, 6, 8), true);
+        // sqrt(5^2 + 5^2) = sqrt(50) ~= 7.07 < 8
+        assert.equal(exceedsDragThreshold(0, 0, 5, 5, 8), false);
+    });
+
+    it('defaults to threshold of 8', () => {
+        assert.equal(exceedsDragThreshold(0, 0, 7, 0), false);
+        assert.equal(exceedsDragThreshold(0, 0, 8, 0), true);
+    });
+
+    it('handles negative movement', () => {
+        assert.equal(exceedsDragThreshold(100, 100, 92, 100, 8), true);
+    });
+});
+
+describe('findClosestIconIndex', () => {
+    it('returns 0 for empty list', () => {
+        assert.equal(findClosestIconIndex([], 50, 50), 0);
+    });
+
+    it('finds closest icon by Euclidean distance', () => {
+        let bounds = [
+            { x: 0, y: 0, width: 30, height: 30 },   // center: 15, 15
+            { x: 40, y: 0, width: 30, height: 30 },   // center: 55, 15
+            { x: 80, y: 0, width: 30, height: 30 }    // center: 95, 15
+        ];
+        // Drop at (60, 15) — closest to icon 1 (center 55,15), right of center -> after it
+        assert.equal(findClosestIconIndex(bounds, 60, 15), 2);
+    });
+
+    it('inserts before icon when drop is left of center', () => {
+        let bounds = [
+            { x: 0, y: 0, width: 30, height: 30 },   // center: 15, 15
+            { x: 40, y: 0, width: 30, height: 30 },   // center: 55, 15
+        ];
+        // Drop at (50, 15) — closest to icon 1 (center 55,15), left of center -> at index 1
+        assert.equal(findClosestIconIndex(bounds, 50, 15), 1);
+    });
+
+    it('handles single icon', () => {
+        let bounds = [{ x: 0, y: 0, width: 30, height: 30 }];
+        // Left of center
+        assert.equal(findClosestIconIndex(bounds, 10, 15), 0);
+        // Right of center
+        assert.equal(findClosestIconIndex(bounds, 20, 15), 1);
+    });
+});
+
+describe('reorderIcon', () => {
+    it('moves icon to beginning', () => {
+        assert.deepEqual(reorderIcon(['a', 'b', 'c'], 'c', 0), ['c', 'a', 'b']);
+    });
+
+    it('moves icon to end', () => {
+        assert.deepEqual(reorderIcon(['a', 'b', 'c'], 'a', 2), ['b', 'c', 'a']);
+    });
+
+    it('moves icon to middle', () => {
+        assert.deepEqual(reorderIcon(['a', 'b', 'c'], 'a', 1), ['b', 'a', 'c']);
+    });
+
+    it('handles icon not in current order', () => {
+        assert.deepEqual(reorderIcon(['a', 'b'], 'c', 1), ['a', 'c', 'b']);
+    });
+
+    it('clamps negative index to 0', () => {
+        assert.deepEqual(reorderIcon(['a', 'b', 'c'], 'c', -1), ['c', 'a', 'b']);
+    });
+
+    it('clamps beyond-end index to end', () => {
+        assert.deepEqual(reorderIcon(['a', 'b'], 'a', 99), ['b', 'a']);
+    });
+
+    it('handles empty order', () => {
+        assert.deepEqual(reorderIcon([], 'a', 0), ['a']);
+    });
+
+    it('no-op when icon is already at target position', () => {
+        assert.deepEqual(reorderIcon(['a', 'b', 'c'], 'b', 1), ['a', 'b', 'c']);
     });
 });

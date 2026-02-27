@@ -217,3 +217,41 @@ describe('applet.js managed icons', () => {
         assert.ok(appletSrc.includes("protocol: 'xapp'"), 'must track xapp protocol');
     });
 });
+
+describe('applet.js DND promote/demote', () => {
+    it('has _setIconVisibility method', () => {
+        assert.ok(appletSrc.includes('_setIconVisibility'), 'missing visibility setter');
+    });
+
+    it('has _setIconOrder method', () => {
+        assert.ok(appletSrc.includes('_setIconOrder'), 'missing order setter');
+    });
+
+    it('persists icon-visibility via settings', () => {
+        assert.ok(appletSrc.includes("setValue('icon-visibility'"), 'must persist visibility');
+    });
+
+    it('persists icon-order via settings', () => {
+        assert.ok(appletSrc.includes("setValue('icon-order'"), 'must persist order');
+    });
+
+    it('has DRAG_THRESHOLD constant', () => {
+        assert.ok(appletSrc.includes('DRAG_THRESHOLD'), 'must define drag threshold');
+    });
+
+    it('has _onPopupButtonPress handler', () => {
+        assert.ok(appletSrc.includes('_onPopupButtonPress'), 'missing button press handler for DND');
+    });
+
+    it('has _onPopupMotion handler', () => {
+        assert.ok(appletSrc.includes('_onPopupMotion'), 'missing motion handler for DND');
+    });
+
+    it('has _onPopupButtonRelease handler', () => {
+        assert.ok(appletSrc.includes('_onPopupButtonRelease'), 'missing button release handler for DND');
+    });
+
+    it('uses exceedsDragThreshold from helpers', () => {
+        assert.ok(appletSrc.includes('exceedsDragThreshold'), 'must use threshold helper');
+    });
+});

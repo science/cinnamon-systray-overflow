@@ -104,7 +104,81 @@ function calcOverflowPanelPosition(appletAlloc, panelSize, monitor, orientation)
     return [x, y];
 }
 
+/**
+ * Check if mouse movement exceeds the drag threshold.
+ *
+ * @param {number} startX - Starting X coordinate
+ * @param {number} startY - Starting Y coordinate
+ * @param {number} currentX - Current X coordinate
+ * @param {number} currentY - Current Y coordinate
+ * @param {number} threshold - Pixel threshold (default 8)
+ * @returns {boolean} True if movement exceeds threshold
+ */
+function exceedsDragThreshold(startX, startY, currentX, currentY, threshold) {
+    if (threshold === undefined) threshold = 8;
+    let dx = currentX - startX;
+    let dy = currentY - startY;
+    return Math.sqrt(dx * dx + dy * dy) >= threshold;
+}
+
+/**
+ * Find the closest icon index in a list based on coordinates.
+ * Used for determining drop position in a section.
+ *
+ * @param {Array<{x: number, y: number, width: number, height: number}>} iconBounds
+ *   Array of icon bounding boxes (center-relative coordinates)
+ * @param {number} x - Drop x-coordinate
+ * @param {number} y - Drop y-coordinate
+ * @returns {number} Index of the closest icon, or 0 if empty
+ */
+function findClosestIconIndex(iconBounds, x, y) {
+    if (iconBounds.length === 0) return 0;
+
+    let minDist = Infinity;
+    let closest = 0;
+
+    for (let i = 0; i < iconBounds.length; i++) {
+        let b = iconBounds[i];
+        let cx = b.x + b.width / 2;
+        let cy = b.y + b.height / 2;
+        let dist = Math.sqrt((x - cx) * (x - cx) + (y - cy) * (y - cy));
+        if (dist < minDist) {
+            minDist = dist;
+            closest = i;
+        }
+    }
+
+    // If drop is to the right of the closest icon center, insert after it
+    let b = iconBounds[closest];
+    let cx = b.x + b.width / 2;
+    if (x > cx && closest < iconBounds.length) {
+        closest++;
+    }
+
+    return closest;
+}
+
+/**
+ * Compute new icon-order array after moving an icon to a new position
+ * within the panel section.
+ *
+ * @param {Array<string>} currentOrder - Current ordered list of panel icon IDs
+ * @param {string} iconId - The icon being moved
+ * @param {number} newIndex - Target index in the panel list
+ * @returns {Array<string>} Updated order array
+ */
+function reorderIcon(currentOrder, iconId, newIndex) {
+    let order = currentOrder.filter(id => id !== iconId);
+    if (newIndex > order.length) newIndex = order.length;
+    if (newIndex < 0) newIndex = 0;
+    order.splice(newIndex, 0, iconId);
+    return order;
+}
+
 // Dual-runtime export
 if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { classifyIcons, xappProxyToId, dropTargetSection, calcOverflowPanelPosition };
+    module.exports = {
+        classifyIcons, xappProxyToId, dropTargetSection, calcOverflowPanelPosition,
+        exceedsDragThreshold, findClosestIconIndex, reorderIcon
+    };
 }
