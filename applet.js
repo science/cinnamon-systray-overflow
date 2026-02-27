@@ -85,6 +85,7 @@ class XAppStatusIcon {
             this.setVisible(proxy.visible);
         }
         if ('Name' in prop_names) {
+            this.applet._updateXAppIconId(this.proxy);
             this.applet.sortXAppIcons();
         }
         if ('PrimaryMenuIsOpen' in prop_names) {
@@ -741,8 +742,15 @@ class SystrayOverflowApplet extends Applet.Applet {
 
         this._xappStatusIcons[key] = statusIcon;
 
-        // Register in managed icons map
-        let id = helpers.xappProxyToId(icon_proxy.name);
+        // Register in managed icons map using name (with object path fallback).
+        // If the base ID already exists, append a suffix to make it unique.
+        let baseId = helpers.xappProxyToId(icon_proxy.name, icon_proxy.get_object_path());
+        let id = baseId;
+        let suffix = 2;
+        while (this._managedIcons.has(id)) {
+            id = baseId + '_' + suffix;
+            suffix++;
+        }
         this._managedIcons.set(id, {
             id: id,
             protocol: 'xapp',
@@ -755,6 +763,30 @@ class SystrayOverflowApplet extends Applet.Applet {
         this._redistributeIcons();
     }
 
+    /**
+     * Update a managed icon's ID when the XApp Name property changes.
+     * Moves the entry in _managedIcons from old key to new key.
+     */
+    _updateXAppIconId(icon_proxy) {
+        let newId = helpers.xappProxyToId(icon_proxy.name, icon_proxy.get_object_path());
+        if (!newId) return;
+
+        // Find the existing entry with matching xappKey
+        let key = this._getXAppKey(icon_proxy);
+        for (let [oldId, managed] of this._managedIcons) {
+            if (managed.protocol === 'xapp' && managed.xappKey === key) {
+                if (oldId !== newId) {
+                    // Re-key the entry
+                    this._managedIcons.delete(oldId);
+                    managed.id = newId;
+                    this._managedIcons.set(newId, managed);
+                    this._redistributeIcons();
+                }
+                return;
+            }
+        }
+    }
+
     _removeXAppIcon(icon_proxy) {
         let key = this._getXAppKey(icon_proxy);
 
@@ -764,9 +796,13 @@ class SystrayOverflowApplet extends Applet.Applet {
 
         let statusIcon = this._xappStatusIcons[key];
 
-        // Remove from managed icons
-        let id = helpers.xappProxyToId(icon_proxy.name);
-        this._managedIcons.delete(id);
+        // Remove from managed icons by finding the entry with matching xappKey
+        for (let [id, managed] of this._managedIcons) {
+            if (managed.protocol === 'xapp' && managed.xappKey === key) {
+                this._managedIcons.delete(id);
+                break;
+            }
+        }
 
         // Remove actor from wherever it is (panel box or overflow)
         let parent = statusIcon.actor.get_parent();
@@ -884,12 +920,16 @@ class SystrayOverflowApplet extends Applet.Applet {
             this._panelBox.set_child_at_index(managed.actor, i);
         }
 
-        // Move overflow icons into overflow container (if it exists)
-        if (this._overflowOverflowSection) {
-            for (let managed of overflow) {
-                let parent = managed.actor.get_parent();
-                if (parent && parent !== this._overflowOverflowSection) {
-                    parent.remove_child(managed.actor);
+        // Remove overflow icons from panel box (they should not be visible there).
+        // If the overflow container exists, move them there; otherwise just remove.
+        for (let managed of overflow) {
+            let parent = managed.actor.get_parent();
+            if (parent === this._panelBox) {
+                this._panelBox.remove_child(managed.actor);
+            }
+            if (this._overflowOverflowSection) {
+                if (managed.actor.get_parent() && managed.actor.get_parent() !== this._overflowOverflowSection) {
+                    managed.actor.get_parent().remove_child(managed.actor);
                 }
                 if (!managed.actor.get_parent()) {
                     this._overflowOverflowSection.add_actor(managed.actor);

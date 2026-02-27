@@ -53,14 +53,27 @@ function classifyIcons(allIcons, prefs, defaultVis, order) {
 }
 
 /**
- * Extract a stable icon ID from an XApp status icon proxy name.
- * Strips the "org.x.StatusIcon." prefix and lowercases.
+ * Extract a stable icon ID from an XApp status icon proxy.
+ * Uses the proxy's name property (e.g. "blueman") if available,
+ * otherwise falls back to extracting from the object path.
  *
- * @param {string} proxyName - e.g. "org.x.StatusIcon.blueman"
- * @returns {string} e.g. "blueman"
+ * @param {string} proxyName - proxy.name property, e.g. "blueman" or ""
+ * @param {string} [objectPath] - optional object path, e.g. "/org/x/StatusIcon/Icon_1"
+ * @returns {string} e.g. "blueman" or "icon_1"
  */
-function xappProxyToId(proxyName) {
-    return proxyName.replace('org.x.StatusIcon.', '').toLowerCase();
+function xappProxyToId(proxyName, objectPath) {
+    // Strip known prefix if present
+    let name = (proxyName || '').replace('org.x.StatusIcon.', '').trim().toLowerCase();
+    if (name) return name;
+
+    // Fallback: extract from object path
+    if (objectPath) {
+        let parts = objectPath.split('/');
+        let last = parts[parts.length - 1] || '';
+        return last.toLowerCase();
+    }
+
+    return '';
 }
 
 /**

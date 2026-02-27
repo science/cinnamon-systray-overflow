@@ -89,6 +89,22 @@ describe('xappProxyToId', () => {
     it('handles multi-segment names', () => {
         assert.equal(xappProxyToId('org.x.StatusIcon.nm-applet'), 'nm-applet');
     });
+
+    it('falls back to object path when name is empty', () => {
+        assert.equal(xappProxyToId('', '/org/x/StatusIcon/Icon_1'), 'icon_1');
+    });
+
+    it('falls back to object path when name is null', () => {
+        assert.equal(xappProxyToId(null, '/org/x/StatusIcon/Icon_2'), 'icon_2');
+    });
+
+    it('prefers name over object path when both available', () => {
+        assert.equal(xappProxyToId('blueman', '/org/x/StatusIcon/Icon_1'), 'blueman');
+    });
+
+    it('returns empty string when both are empty', () => {
+        assert.equal(xappProxyToId('', ''), '');
+    });
 });
 
 describe('dropTargetSection', () => {

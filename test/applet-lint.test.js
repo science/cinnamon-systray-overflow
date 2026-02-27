@@ -303,7 +303,7 @@ describe('applet.js polish — edge cases', () => {
         // _removeXAppIcon method body must call _redistributeIcons
         let methodStart = appletSrc.indexOf('_removeXAppIcon(icon_proxy) {');
         assert.ok(methodStart > 0, '_removeXAppIcon method not found');
-        let removeXApp = appletSrc.substring(methodStart, methodStart + 700);
+        let removeXApp = appletSrc.substring(methodStart, methodStart + 900);
         assert.ok(removeXApp.includes('_redistributeIcons'), 'must redistribute on XApp remove');
     });
 
