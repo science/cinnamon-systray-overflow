@@ -1,0 +1,7 @@
+{
+ "uuid": "systray-overflow@cinnamon",
+ "name": "System Tray with Overflow",
+ "description": "Unified system tray applet combining XEmbed and XApp protocols with overflow support",
+ "role": "tray",
+ "max-instances": 1
+}

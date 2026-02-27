@@ -1,0 +1,15 @@
+{
+  "name": "cinnamon-systray-overflow",
+  "version": "1.0.0",
+  "description": "Unified system tray applet for Cinnamon with overflow support",
+  "main": "applet.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "GPL-2.0"
+}

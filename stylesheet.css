@@ -1,0 +1,26 @@
+/* systray-overflow@cinnamon stylesheet */
+
+.systray-overflow-panel {
+    padding: 8px;
+    spacing: 4px;
+}
+
+.systray-overflow-section-label {
+    font-size: 0.85em;
+    font-weight: bold;
+    color: rgba(255, 255, 255, 0.6);
+    padding: 2px 4px;
+}
+
+.systray-overflow-icon-grid {
+    spacing: 4px;
+}
+
+.systray-overflow-chevron {
+    padding: 0 2px;
+}
+
+.systray-overflow-drop-highlight {
+    background-color: rgba(255, 255, 255, 0.15);
+    border-radius: 4px;
+}

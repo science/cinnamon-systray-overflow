@@ -1,0 +1,23 @@
+{
+  "section-overflow": {
+    "type": "section",
+    "description": "Overflow Behavior"
+  },
+  "icon-visibility": {
+    "type": "generic",
+    "default": {}
+  },
+  "icon-order": {
+    "type": "generic",
+    "default": []
+  },
+  "default-visibility": {
+    "type": "combobox",
+    "default": "panel",
+    "options": {
+      "Show in panel": "panel",
+      "Hide in overflow": "overflow"
+    },
+    "description": "Where to place newly-seen icons"
+  }
+}
