@@ -995,9 +995,9 @@ class SystrayOverflowApplet extends Applet.Applet {
         // Inner container with two sections
         let innerBox = new St.BoxLayout({ vertical: true, style: 'spacing: 6px;' });
 
-        // "Visible in panel" section
+        // "Shown" section — tray icons visible in the panel
         let visibleLabel = new St.Label({
-            text: 'Visible in panel',
+            text: 'Shown',
             style_class: 'systray-overflow-section-label'
         });
         this._overflowVisibleSection = new St.BoxLayout({
@@ -1005,9 +1005,9 @@ class SystrayOverflowApplet extends Applet.Applet {
             style: 'spacing: 4px;'
         });
 
-        // "Overflow only" section
+        // "Hidden" section — tray icons in overflow (click chevron to access)
         let overflowLabel = new St.Label({
-            text: 'Overflow',
+            text: 'Hidden',
             style_class: 'systray-overflow-section-label'
         });
         this._overflowOverflowSection = new St.BoxLayout({
@@ -1023,13 +1023,9 @@ class SystrayOverflowApplet extends Applet.Applet {
         this._overflowPanel.set_child(innerBox);
         this._overflowPanel._delegate = this;
 
-        // DND event handlers on the popup panel
-        this._overflowPanel.connect('button-press-event',
-            (actor, event) => this._onPopupButtonPress(actor, event));
-        this._overflowPanel.connect('button-release-event',
-            (actor, event) => this._onPopupButtonRelease(actor, event));
-        this._overflowPanel.connect('motion-event',
-            (actor, event) => this._onPopupMotion(actor, event));
+        // Note: button/motion events are routed from _onOverflowCapturedEvent
+        // because pushModal prevents events from reaching the panel's own
+        // signal handlers.
 
         global.stage.add_child(this._overflowPanel);
     }
@@ -1083,8 +1079,12 @@ class SystrayOverflowApplet extends Applet.Applet {
             if (icon) icon.icon_name = 'pan-up-symbolic';
         }
 
-        // Modal input routing
+        // Modal input routing — may fail in SPICE/VNC viewers due to
+        // X-level grab. The popup still works via captured-event routing.
         this._overflowModalPushed = Main.pushModal(this._overflowPanel);
+        if (!this._overflowModalPushed) {
+            global.log('systray-overflow: pushModal failed (SPICE/VNC grab?), using captured-event only');
+        }
 
         // Click-outside / Escape detection
         this._capturedEventId = global.stage.connect('captured-event',
@@ -1092,7 +1092,18 @@ class SystrayOverflowApplet extends Applet.Applet {
     }
 
     _closeOverflowPanel() {
-        if (!this._overflowPanel) return;
+        if (!this._overflowPanel || !this._overflowPanelOpen) return;
+
+        // Mark closed immediately to prevent re-entrant calls
+        this._overflowPanelOpen = false;
+
+        // Reset DND state
+        if (this._dndSource) {
+            this._dndSource.actor.opacity = 255;
+            this._dndSource = null;
+        }
+        this._dndDragging = false;
+        this._clearDropHighlight();
 
         // Disconnect captured-event BEFORE popModal
         if (this._capturedEventId) {
@@ -1109,7 +1120,6 @@ class SystrayOverflowApplet extends Applet.Applet {
         this._depopulateOverflowPopup();
 
         this._overflowPanel.hide();
-        this._overflowPanelOpen = false;
 
         // Update chevron direction
         if (this._overflowIndicator) {
@@ -1170,6 +1180,13 @@ class SystrayOverflowApplet extends Applet.Applet {
         );
     }
 
+    _isInsideActor(x, y, actor) {
+        if (!actor) return false;
+        let [ax, ay] = actor.get_transformed_position();
+        let [aw, ah] = actor.get_transformed_size();
+        return (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah);
+    }
+
     _onOverflowCapturedEvent(event) {
         let type = event.type();
 
@@ -1181,34 +1198,40 @@ class SystrayOverflowApplet extends Applet.Applet {
             }
         }
 
-        // Click outside closes
+        // Route button and motion events through the popup handlers.
+        // pushModal prevents events from reaching the panel's own signal
+        // handlers, so we dispatch directly from captured-event.
         if (type === Clutter.EventType.BUTTON_PRESS) {
             let [ex, ey] = event.get_coords();
 
-            let insidePanel = false;
-            if (this._overflowPanel) {
-                let [px, py] = this._overflowPanel.get_transformed_position();
-                let [pw, ph] = this._overflowPanel.get_transformed_size();
-                insidePanel = (ex >= px && ex <= px + pw && ey >= py && ey <= py + ph);
-            }
+            let insidePanel = this._isInsideActor(ex, ey, this._overflowPanel);
+            let insideChevron = this._isInsideActor(ex, ey, this._overflowIndicator);
 
-            let insideChevron = false;
-            if (this._overflowIndicator) {
-                let [cx, cy] = this._overflowIndicator.get_transformed_position();
-                let [cw, ch] = this._overflowIndicator.get_transformed_size();
-                insideChevron = (ex >= cx && ex <= cx + cw && ey >= cy && ey <= cy + ch);
-            }
-
-            let insideApplet = false;
-            if (this.actor) {
-                let [ax, ay] = this.actor.get_transformed_position();
-                let [aw, ah] = this.actor.get_transformed_size();
-                insideApplet = (ex >= ax && ex <= ax + aw && ey >= ay && ey <= ay + ah);
-            }
-
-            if (!insidePanel && !insideChevron && !insideApplet) {
+            if (insideChevron) {
                 this._closeOverflowPanel();
                 return Clutter.EVENT_STOP;
+            }
+
+            if (insidePanel) {
+                return this._onPopupButtonPress(this._overflowPanel, event);
+            }
+
+            // Click outside closes
+            this._closeOverflowPanel();
+            return Clutter.EVENT_STOP;
+        }
+
+        if (type === Clutter.EventType.BUTTON_RELEASE) {
+            let [ex, ey] = event.get_coords();
+            let insidePanel = this._isInsideActor(ex, ey, this._overflowPanel);
+            if (insidePanel || this._dndSource) {
+                return this._onPopupButtonRelease(this._overflowPanel, event);
+            }
+        }
+
+        if (type === Clutter.EventType.MOTION) {
+            if (this._dndSource) {
+                return this._onPopupMotion(this._overflowPanel, event);
             }
         }
 

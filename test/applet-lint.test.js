@@ -146,8 +146,19 @@ describe('applet.js overflow UI', () => {
         assert.ok(appletSrc.includes('Main.popModal'), 'must use popModal');
     });
 
-    it('uses captured-event for click-outside detection', () => {
+    it('uses captured-event for click-outside detection and event routing', () => {
         assert.ok(appletSrc.includes("'captured-event'"), 'must use captured-event');
+    });
+
+    it('routes button events from captured-event to popup handlers', () => {
+        // pushModal prevents events from reaching panel signal handlers,
+        // so captured-event must dispatch to _onPopupButtonPress/_onPopupButtonRelease
+        let methodStart = appletSrc.indexOf('_onOverflowCapturedEvent(event) {');
+        assert.ok(methodStart > 0, 'captured event handler not found');
+        let method = appletSrc.substring(methodStart, methodStart + 1800);
+        assert.ok(method.includes('_onPopupButtonPress'), 'must route press to popup handler');
+        assert.ok(method.includes('_onPopupButtonRelease'), 'must route release to popup handler');
+        assert.ok(method.includes('_onPopupMotion'), 'must route motion to popup handler');
     });
 
     it('handles Escape key to close', () => {
@@ -158,7 +169,7 @@ describe('applet.js overflow UI', () => {
         // The disconnect must come before popModal in _closeOverflowPanel method body
         let methodStart = appletSrc.indexOf('_closeOverflowPanel() {');
         assert.ok(methodStart > 0, '_closeOverflowPanel method not found');
-        let closeMethod = appletSrc.substring(methodStart, methodStart + 600);
+        let closeMethod = appletSrc.substring(methodStart, methodStart + 900);
         let disconnectIdx = closeMethod.indexOf('stage.disconnect');
         // Find Main.popModal (the actual call, not the comment)
         let popModalIdx = closeMethod.indexOf('Main.popModal');
