@@ -265,6 +265,17 @@ describe('applet.js DND promote/demote', () => {
     it('uses exceedsDragThreshold from helpers', () => {
         assert.ok(appletSrc.includes('exceedsDragThreshold'), 'must use threshold helper');
     });
+
+    it('creates a drag clone actor that follows cursor during DND', () => {
+        assert.ok(appletSrc.includes('_dndClone'), 'must have drag clone for visual feedback');
+        assert.ok(appletSrc.includes('_createDndClone'), 'must create clone on drag start');
+        assert.ok(appletSrc.includes('_destroyDndClone'), 'must clean up clone on release');
+        // The clone must be positioned during motion
+        let motionStart = appletSrc.indexOf('_onPopupMotion(actor, event) {');
+        assert.ok(motionStart > 0, '_onPopupMotion not found');
+        let motionMethod = appletSrc.substring(motionStart, motionStart + 800);
+        assert.ok(motionMethod.includes('_positionDndClone'), 'motion handler must position drag clone');
+    });
 });
 
 describe('applet.js polish — edge cases', () => {
@@ -297,12 +308,16 @@ describe('applet.js polish — edge cases', () => {
         assert.ok(appletSrc.includes('_onIconThemeChanged'), 'must refresh on icon theme change');
     });
 
-    it('closes popup when chevron hidden (0 overflow icons)', () => {
-        // _updateChevronVisibility method body must close popup when no overflow
-        let methodStart = appletSrc.indexOf('_updateChevronVisibility(hasOverflow)');
-        assert.ok(methodStart > 0, '_updateChevronVisibility method not found');
-        let updateMethod = appletSrc.substring(methodStart, methodStart + 600);
-        assert.ok(updateMethod.includes('_closeOverflowPanel'), 'must close when 0 overflow');
+    it('always creates overflow UI so chevron is always visible', () => {
+        // _redistributeIcons must always call _ensureOverflowUI (unconditionally)
+        let methodStart = appletSrc.indexOf('_redistributeIcons() {');
+        assert.ok(methodStart > 0, '_redistributeIcons method not found');
+        // Find next method boundary to get full body
+        let nextMethod = appletSrc.indexOf('\n    _', methodStart + 1);
+        let method = appletSrc.substring(methodStart, nextMethod);
+        assert.ok(method.includes('_ensureOverflowUI'), 'must always ensure overflow UI exists');
+        // Must NOT conditionally hide the chevron
+        assert.ok(!method.includes('.hide()'), 'must not conditionally hide chevron');
     });
 
     it('redistributes icons when new icon appears', () => {
@@ -321,5 +336,14 @@ describe('applet.js polish — edge cases', () => {
     it('clears DND state when popup closes', () => {
         // _closeOverflowPanel or _depopulateOverflowPopup must handle clean state
         assert.ok(appletSrc.includes('_depopulateOverflowPopup'), 'must depopulate on close');
+    });
+
+    it('populate moves panel icons into visible section of popup', () => {
+        // _populateOverflowPopup must reparent panel icons into _overflowVisibleSection
+        let methodStart = appletSrc.indexOf('_populateOverflowPopup() {');
+        assert.ok(methodStart > 0, '_populateOverflowPopup method not found');
+        let method = appletSrc.substring(methodStart, methodStart + 1300);
+        assert.ok(method.includes('_overflowVisibleSection.add_actor'), 'must add panel icons to visible section');
+        assert.ok(method.includes('_overflowOverflowSection.add_actor'), 'must add overflow icons to overflow section');
     });
 });

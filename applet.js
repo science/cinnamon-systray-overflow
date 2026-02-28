@@ -942,23 +942,10 @@ class SystrayOverflowApplet extends Applet.Applet {
             this._panelBox.set_child_at_index(this._recording_indicator.actor, -1);
         }
 
-        // Show/hide chevron based on whether overflow has icons
-        this._updateChevronVisibility(overflow.length > 0);
-    }
-
-    _updateChevronVisibility(hasOverflow) {
-        if (hasOverflow) {
-            this._ensureOverflowUI();
-            if (this._overflowIndicator) {
-                this._overflowIndicator.show();
-            }
-        } else {
-            if (this._overflowIndicator) {
-                this._overflowIndicator.hide();
-            }
-            if (this._overflowPanelOpen) {
-                this._closeOverflowPanel();
-            }
+        // Always show chevron so users can open popup and drag icons to overflow
+        this._ensureOverflowUI();
+        if (this._overflowIndicator) {
+            this._overflowIndicator.show();
         }
     }
 
@@ -1103,6 +1090,7 @@ class SystrayOverflowApplet extends Applet.Applet {
             this._dndSource = null;
         }
         this._dndDragging = false;
+        this._destroyDndClone();
         this._clearDropHighlight();
 
         // Disconnect captured-event BEFORE popModal
@@ -1311,14 +1299,15 @@ class SystrayOverflowApplet extends Applet.Applet {
         if (!this._dndDragging) {
             if (helpers.exceedsDragThreshold(this._dndStartX, this._dndStartY, x, y, DRAG_THRESHOLD)) {
                 this._dndDragging = true;
-                // Visual feedback: make source semi-transparent
+                // Visual feedback: make source semi-transparent and create drag clone
                 this._dndSource.actor.opacity = 128;
+                this._createDndClone(this._dndSource.actor, x, y);
             }
         }
 
         if (this._dndDragging) {
-            // Highlight which section the cursor is over
             this._updateDropHighlight(x, y);
+            this._positionDndClone(x, y);
         }
 
         return Clutter.EVENT_STOP;
@@ -1337,6 +1326,7 @@ class SystrayOverflowApplet extends Applet.Applet {
 
         // Reset drag state
         managed.actor.opacity = 255;
+        this._destroyDndClone();
         this._clearDropHighlight();
         this._dndSource = null;
         this._dndDragging = false;
@@ -1449,6 +1439,40 @@ class SystrayOverflowApplet extends Applet.Applet {
             });
         }
         return bounds;
+    }
+
+    /**
+     * Create a clone of the dragged icon that follows the cursor.
+     */
+    _createDndClone(sourceActor, x, y) {
+        this._destroyDndClone();
+        this._dndClone = new Clutter.Clone({ source: sourceActor });
+        this._dndClone.set_opacity(200);
+        global.stage.add_child(this._dndClone);
+        this._dndClone.raise_top();
+        this._positionDndClone(x, y);
+    }
+
+    /**
+     * Position the drag clone centered on the cursor.
+     */
+    _positionDndClone(x, y) {
+        if (!this._dndClone) return;
+        let [w, h] = this._dndClone.get_size();
+        this._dndClone.set_position(Math.round(x - w / 2), Math.round(y - h / 2));
+    }
+
+    /**
+     * Remove the drag clone from the stage.
+     */
+    _destroyDndClone() {
+        if (this._dndClone) {
+            if (this._dndClone.get_parent()) {
+                this._dndClone.get_parent().remove_child(this._dndClone);
+            }
+            this._dndClone.destroy();
+            this._dndClone = null;
+        }
     }
 
     /**
