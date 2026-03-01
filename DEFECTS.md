@@ -147,7 +147,38 @@ panelHeight = panelPad
 
 **Files:** `dnd-handler.js` (investigation + fix), `test/dnd-lint.test.js` (add promote scenario coverage)
 
+---
+
+## Defect 3: Chevron position unstable among system applet proxy icons
+
+**Severity:** High (persistent, unfixed across multiple attempts)
+**Component:** Chevron positioning architecture
+**Status:** Open — requires architectural change (see below)
+
+### Symptom
+The chevron (overflow toggle button) does not reliably stay to the right of ALL systray icons. It typically stays to the right of application tray icons (XEmbed/XApp), but is displaced by system applet proxy icons (sound, display, power, etc.) which are managed by Cinnamon's panel zone system, not by our `_panelBox` or `applet.actor`.
+
+### History of Failed Fixes
+1. **Chevron in `_panelBox` with `set_child_at_index(panel.length)`** — displaced by `insert_child_at_index(icon, 0)` and `sortXAppIcons()` which ignore the chevron
+2. **Chevron moved to `applet.actor` as sibling of `_panelBox`** — still displaced by system applet proxy icons which are positioned by Cinnamon's panel zone independently
+
+### Root Cause
+System applet proxy icons are rendered by Cinnamon's panel zone layout system, which positions applets in zones (`_leftBox`, `_centerBox`, `_rightBox`). Each applet is a separate actor in the zone. Our applet's actor and the system applet proxy icons' actors are siblings in the zone, and Cinnamon controls their ordering — we cannot.
+
+No amount of `set_child_at_index` or container-hierarchy changes within our applet can affect the relative ordering of other applets' actors in the zone.
+
+### Proposed Fix: Panel-attached button (not a tray icon)
+Follow the pattern from `cinnamon-multirow-panellauncher`: create the chevron as a pure `St.Button` child of `this.actor` (the applet's main box), completely outside the tray icon system. This makes it:
+- Immune to XEmbed/XApp icon dispatcher position scrambling
+- Positioned by Cinnamon's layout engine automatically (as part of the applet's allocation)
+- Always at the trailing edge of the applet's box
+
+See `~/dev/cinnamon-multirow-panellauncher/applet.js` line 610-626 for reference implementation.
+
+---
+
 ### Priority
 
-1. **Defect 1** (first-open height) — Quick fix, deterministic, low risk. Do first.
-2. **Defect 2** (DND promote) — Needs investigation. Pre-existing, not a regression. Do second.
+1. **Defect 3** (chevron position) — Architectural change required. Highest priority.
+2. **Defect 1** (first-open height) — Quick fix, deterministic, low risk.
+3. **Defect 2** (DND promote) — Needs investigation. Pre-existing, not a regression.
