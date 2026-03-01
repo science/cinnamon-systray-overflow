@@ -21,11 +21,15 @@ const Tooltips = imports.ui.tooltips;
 const Settings = imports.ui.settings;
 
 const helpers = require('./helpers');
+const { DND_STATE } = helpers;
+const IconRegistry = require('./icon-registry');
+const SystemAppletProxy = require('./system-applet-proxy');
+const DndHandler = require('./dnd-handler');
+const PopupManager = require('./popup-manager');
 
 const HORIZONTAL_STYLE = 'padding-left: 2px; padding-right: 2px; padding-top: 0; padding-bottom: 0';
 const VERTICAL_STYLE = 'padding-left: 0; padding-right: 0; padding-top: 2px; padding-bottom: 2px';
 const NO_RESIZE_ROLES = ['shutter', 'filezilla'];
-const DRAG_THRESHOLD = 8;
 
 // ─── XApp Status Icon Wrapper ───────────────────────────────────────────
 
@@ -391,12 +395,16 @@ class SystrayOverflowApplet extends Applet.Applet {
 
         // ── Settings ──
         this.settings = new Settings.AppletSettings(this, 'systray-overflow@cinnamon', instance_id);
-        this.settings.bind('icon-visibility', 'iconVisibility', () => this._redistributeIcons());
-        this.settings.bind('icon-order', 'iconOrder', () => this._redistributeIcons());
+        this.settings.bind('icon-visibility', 'iconVisibility', () => this._registry.redistributeIcons());
+        this.settings.bind('icon-order', 'iconOrder', () => this._registry.redistributeIcons());
         this.settings.bind('default-visibility', 'defaultVisibility');
+        this.settings.bind('disabled-applets', 'disabledApplets');
 
         // ── Unified icon tracking ──
-        this._managedIcons = new Map(); // id -> { id, protocol, actor, xappIcon?, role? }
+        this._registry = new IconRegistry(this);
+
+        // ── System applet proxy management ──
+        this._sysProxy = new SystemAppletProxy(this);
 
         // ── Panel box for visible icons ──
         let isVertical = [St.Side.LEFT, St.Side.RIGHT].includes(this.orientation);
@@ -413,21 +421,15 @@ class SystrayOverflowApplet extends Applet.Applet {
         this._recording_indicator = new RecorderIcon(this);
         this._panelBox.add_actor(this._recording_indicator.actor);
 
-        // ── Overflow UI (lazy-created in Phase 2) ──
-        this._overflowPanel = null;
-        this._overflowPanelOpen = false;
-        this._overflowIndicator = null;
-        this._overflowGrid = null;
-        this._overflowVisibleSection = null;
-        this._overflowOverflowSection = null;
-        this._capturedEventId = 0;
-        this._overflowModalPushed = false;
+        // ── Popup manager (extracted module) ──
+        this._popup = new PopupManager(this);
 
-        // ── DND state (Phase 3) ──
-        this._dndActive = false;
-        this._dndStartX = 0;
-        this._dndStartY = 0;
-        this._dndSource = null;
+        // ── DND handler (extracted module) ──
+        this._dndHandler = new DndHandler(this);
+
+        // ── Deferred icon removal during popup (Phase 1D) ──
+        this._deferredXEmbedClear = false;
+        this._pendingIconRemovals = [];
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────
@@ -459,6 +461,12 @@ class SystrayOverflowApplet extends Applet.Applet {
             global.trayReloading = false;
             Main.statusIconDispatcher.redisplay();
         }
+
+        // Restore hidden system applet state after other applets have loaded
+        Mainloop.timeout_add(2000, () => {
+            this._sysProxy.restoreHiddenState();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     on_applet_reloaded() {
@@ -469,8 +477,8 @@ class SystrayOverflowApplet extends Applet.Applet {
         this._signalManager.disconnectAllSignals();
 
         // Close overflow popup
-        this._closeOverflowPanel();
-        this._destroyOverflowUI();
+        this._popup.closePanel();
+        this._popup.destroyOverflowUI();
 
         // Destroy XEmbed icons
         this._clearXEmbedIcons();
@@ -492,7 +500,7 @@ class SystrayOverflowApplet extends Applet.Applet {
         }
 
         // Clear managed icons map
-        this._managedIcons.clear();
+        this._registry.clear();
 
         if (this._scaleUpdateId > 0) {
             Mainloop.source_remove(this._scaleUpdateId);
@@ -572,7 +580,7 @@ class SystrayOverflowApplet extends Applet.Applet {
 
     _clearXEmbedIcons() {
         // Remove XEmbed icons from managed set and destroy their buttons
-        for (let [id, managed] of this._managedIcons) {
+        for (let [id, managed] of this._registry) {
             if (managed.protocol === 'xembed') {
                 let parent = managed.actor.get_parent();
                 if (parent) {
@@ -580,12 +588,17 @@ class SystrayOverflowApplet extends Applet.Applet {
                 }
                 // The St.Bin button wraps the CinnamonTrayIcon
                 managed.actor.destroy();
-                this._managedIcons.delete(id);
+                this._registry.delete(id);
             }
         }
     }
 
     _onBeforeRedisplay() {
+        // Defer during popup — clone sources would be destroyed mid-display
+        if (this._popup.isOpen()) {
+            this._deferredXEmbedClear = true;
+            return;
+        }
         // XEmbed icons get destroyed and recreated on redisplay
         this._clearXEmbedIcons();
     }
@@ -633,7 +646,7 @@ class SystrayOverflowApplet extends Applet.Applet {
 
             // Register in managed icons map
             let id = role.toLowerCase();
-            this._managedIcons.set(id, {
+            this._registry.set(id, {
                 id: id,
                 protocol: 'xembed',
                 actor: button,
@@ -642,7 +655,7 @@ class SystrayOverflowApplet extends Applet.Applet {
 
             // Place in panel box (redistribute will sort later)
             this._panelBox.insert_child_at_index(button, 0);
-            this._redistributeIcons();
+            this._registry.redistributeIcons();
         } catch (e) {
             global.logError(e);
         }
@@ -658,7 +671,7 @@ class SystrayOverflowApplet extends Applet.Applet {
 
         if (etype === Clutter.EventType.BUTTON_PRESS) {
             // Guard against nesting with overflow popup's pushModal
-            if (!this._overflowPanelOpen) {
+            if (!this._popup.isOpen()) {
                 global.begin_modal(Meta.ModalOptions.POINTER_ALREADY_GRABBED, event.time);
             }
         } else if (etype === Clutter.EventType.ENTER) {
@@ -670,7 +683,7 @@ class SystrayOverflowApplet extends Applet.Applet {
         let ret = icon.handle_event(etype, event);
 
         if (etype === Clutter.EventType.BUTTON_PRESS) {
-            if (!this._overflowPanelOpen) {
+            if (!this._popup.isOpen()) {
                 global.end_modal(event.time);
             }
         }
@@ -679,12 +692,18 @@ class SystrayOverflowApplet extends Applet.Applet {
     }
 
     _onTrayIconRemoved(o, icon) {
+        // Defer during popup — destroying clone source would crash
+        if (this._popup.isOpen()) {
+            this._pendingIconRemovals.push({ type: 'xembed', icon: icon });
+            return;
+        }
+
         const parent = icon.get_parent();
 
         // Remove from managed icons
-        for (let [id, managed] of this._managedIcons) {
+        for (let [id, managed] of this._registry) {
             if (managed.protocol === 'xembed' && managed.actor.child === icon) {
-                this._managedIcons.delete(id);
+                this._registry.delete(id);
                 break;
             }
         }
@@ -694,7 +713,7 @@ class SystrayOverflowApplet extends Applet.Applet {
             parent.destroy();
         }
 
-        this._redistributeIcons();
+        this._registry.redistributeIcons();
     }
 
     // ── XApp Protocol ───────────────────────────────────────────────────
@@ -747,11 +766,11 @@ class SystrayOverflowApplet extends Applet.Applet {
         let baseId = helpers.xappProxyToId(icon_proxy.name, icon_proxy.get_object_path());
         let id = baseId;
         let suffix = 2;
-        while (this._managedIcons.has(id)) {
+        while (this._registry.has(id)) {
             id = baseId + '_' + suffix;
             suffix++;
         }
-        this._managedIcons.set(id, {
+        this._registry.set(id, {
             id: id,
             protocol: 'xapp',
             actor: statusIcon.actor,
@@ -760,7 +779,7 @@ class SystrayOverflowApplet extends Applet.Applet {
         });
 
         this._panelBox.insert_child_at_index(statusIcon.actor, 0);
-        this._redistributeIcons();
+        this._registry.redistributeIcons();
     }
 
     /**
@@ -773,14 +792,14 @@ class SystrayOverflowApplet extends Applet.Applet {
 
         // Find the existing entry with matching xappKey
         let key = this._getXAppKey(icon_proxy);
-        for (let [oldId, managed] of this._managedIcons) {
+        for (let [oldId, managed] of this._registry) {
             if (managed.protocol === 'xapp' && managed.xappKey === key) {
                 if (oldId !== newId) {
                     // Re-key the entry
-                    this._managedIcons.delete(oldId);
+                    this._registry.delete(oldId);
                     managed.id = newId;
-                    this._managedIcons.set(newId, managed);
-                    this._redistributeIcons();
+                    this._registry.set(newId, managed);
+                    this._registry.redistributeIcons();
                 }
                 return;
             }
@@ -788,6 +807,12 @@ class SystrayOverflowApplet extends Applet.Applet {
     }
 
     _removeXAppIcon(icon_proxy) {
+        // Defer during popup — destroying clone source would crash
+        if (this._popup.isOpen()) {
+            this._pendingIconRemovals.push({ type: 'xapp', proxy: icon_proxy });
+            return;
+        }
+
         let key = this._getXAppKey(icon_proxy);
 
         if (!this._xappStatusIcons[key]) {
@@ -797,9 +822,9 @@ class SystrayOverflowApplet extends Applet.Applet {
         let statusIcon = this._xappStatusIcons[key];
 
         // Remove from managed icons by finding the entry with matching xappKey
-        for (let [id, managed] of this._managedIcons) {
+        for (let [id, managed] of this._registry) {
             if (managed.protocol === 'xapp' && managed.xappKey === key) {
-                this._managedIcons.delete(id);
+                this._registry.delete(id);
                 break;
             }
         }
@@ -813,7 +838,7 @@ class SystrayOverflowApplet extends Applet.Applet {
         statusIcon.destroy();
         delete this._xappStatusIcons[key];
 
-        this._redistributeIcons();
+        this._registry.redistributeIcons();
     }
 
     _ignoreStatusIcon(icon_proxy) {
@@ -896,609 +921,7 @@ class SystrayOverflowApplet extends Applet.Applet {
         }
     }
 
-    // ── Icon Classification & Redistribution ────────────────────────────
-
-    _redistributeIcons() {
-        let allIcons = Array.from(this._managedIcons.values());
-        let { panel, overflow } = helpers.classifyIcons(
-            allIcons,
-            this.iconVisibility || {},
-            this.defaultVisibility || 'panel',
-            this.iconOrder || []
-        );
-
-        // Move panel icons into _panelBox in order
-        for (let i = 0; i < panel.length; i++) {
-            let managed = panel[i];
-            let parent = managed.actor.get_parent();
-            if (parent && parent !== this._panelBox) {
-                parent.remove_child(managed.actor);
-            }
-            if (!managed.actor.get_parent()) {
-                this._panelBox.add_actor(managed.actor);
-            }
-            this._panelBox.set_child_at_index(managed.actor, i);
-        }
-
-        // Remove overflow icons from panel box (they should not be visible there).
-        // If the overflow container exists, move them there; otherwise just remove.
-        for (let managed of overflow) {
-            let parent = managed.actor.get_parent();
-            if (parent === this._panelBox) {
-                this._panelBox.remove_child(managed.actor);
-            }
-            if (this._overflowOverflowSection) {
-                if (managed.actor.get_parent() && managed.actor.get_parent() !== this._overflowOverflowSection) {
-                    managed.actor.get_parent().remove_child(managed.actor);
-                }
-                if (!managed.actor.get_parent()) {
-                    this._overflowOverflowSection.add_actor(managed.actor);
-                }
-            }
-        }
-
-        // Keep recording indicator at the end
-        if (this._recording_indicator) {
-            this._panelBox.set_child_at_index(this._recording_indicator.actor, -1);
-        }
-
-        // Always show chevron so users can open popup and drag icons to overflow
-        this._ensureOverflowUI();
-        if (this._overflowIndicator) {
-            this._overflowIndicator.show();
-        }
-    }
-
-    // ── Overflow UI ─────────────────────────────────────────────────────
-
-    _ensureOverflowUI() {
-        if (this._overflowPanel) return;
-
-        // Chevron button
-        this._overflowIndicator = new St.Button({
-            style_class: 'systray-overflow-chevron applet-box',
-            important: true,
-            reactive: true,
-            can_focus: true,
-            track_hover: true
-        });
-        let chevronIcon = new St.Icon({
-            icon_name: 'pan-down-symbolic',
-            icon_size: Math.round(this.icon_size * 0.75),
-            icon_type: St.IconType.SYMBOLIC
-        });
-        this._overflowIndicator.set_child(chevronIcon);
-        this._overflowIndicator.connect('clicked', () => this._toggleOverflowPanel());
-        this.actor.add(this._overflowIndicator);
-
-        // Overflow popup panel on global.stage
-        this._overflowPanel = new St.Bin({
-            style_class: 'menu systray-overflow-panel',
-            important: true,
-            reactive: true,
-            visible: false
-        });
-
-        // Inner container with two sections
-        let innerBox = new St.BoxLayout({ vertical: true, style: 'spacing: 6px;' });
-
-        // "Shown" section — tray icons visible in the panel
-        let visibleLabel = new St.Label({
-            text: 'Shown',
-            style_class: 'systray-overflow-section-label'
-        });
-        this._overflowVisibleSection = new St.BoxLayout({
-            style_class: 'systray-overflow-icon-grid',
-            style: 'spacing: 4px;'
-        });
-
-        // "Hidden" section — tray icons in overflow (click chevron to access)
-        let overflowLabel = new St.Label({
-            text: 'Hidden',
-            style_class: 'systray-overflow-section-label'
-        });
-        this._overflowOverflowSection = new St.BoxLayout({
-            style_class: 'systray-overflow-icon-grid',
-            style: 'spacing: 4px;'
-        });
-
-        innerBox.add_actor(visibleLabel);
-        innerBox.add_actor(this._overflowVisibleSection);
-        innerBox.add_actor(overflowLabel);
-        innerBox.add_actor(this._overflowOverflowSection);
-
-        this._overflowPanel.set_child(innerBox);
-        this._overflowPanel._delegate = this;
-
-        // Note: button/motion events are routed from _onOverflowCapturedEvent
-        // because pushModal prevents events from reaching the panel's own
-        // signal handlers.
-
-        global.stage.add_child(this._overflowPanel);
-    }
-
-    _destroyOverflowUI() {
-        if (this._overflowPanelOpen) this._closeOverflowPanel();
-        if (this._overflowPanel) {
-            global.stage.remove_child(this._overflowPanel);
-            this._overflowPanel.destroy();
-            this._overflowPanel = null;
-        }
-        this._overflowVisibleSection = null;
-        this._overflowOverflowSection = null;
-        if (this._overflowIndicator) {
-            this.actor.remove_child(this._overflowIndicator);
-            this._overflowIndicator.destroy();
-            this._overflowIndicator = null;
-        }
-        this._overflowPanelOpen = false;
-    }
-
-    _toggleOverflowPanel() {
-        if (this._overflowPanelOpen)
-            this._closeOverflowPanel();
-        else
-            this._openOverflowPanel();
-    }
-
-    _openOverflowPanel() {
-        if (!this._overflowPanel || this._overflowPanelOpen) return;
-
-        this._overflowPanelOpen = true;
-
-        // Populate overflow popup with clones/references of icons
-        this._populateOverflowPopup();
-
-        // Constrain panel to preferred size
-        let [, pw] = this._overflowPanel.get_preferred_width(-1);
-        let [, ph] = this._overflowPanel.get_preferred_height(pw);
-        this._overflowPanel.set_width(pw);
-        this._overflowPanel.set_height(ph);
-
-        let [x, y] = this._calcOverflowPanelPosition();
-        this._overflowPanel.set_position(x, y);
-        this._overflowPanel.show();
-        this._overflowPanel.raise_top();
-
-        // Update chevron direction
-        if (this._overflowIndicator) {
-            let icon = this._overflowIndicator.get_child();
-            if (icon) icon.icon_name = 'pan-up-symbolic';
-        }
-
-        // Modal input routing — may fail in SPICE/VNC viewers due to
-        // X-level grab. The popup still works via captured-event routing.
-        this._overflowModalPushed = Main.pushModal(this._overflowPanel);
-        if (!this._overflowModalPushed) {
-            global.log('systray-overflow: pushModal failed (SPICE/VNC grab?), using captured-event only');
-        }
-
-        // Click-outside / Escape detection
-        this._capturedEventId = global.stage.connect('captured-event',
-            (stage, event) => this._onOverflowCapturedEvent(event));
-    }
-
-    _closeOverflowPanel() {
-        if (!this._overflowPanel || !this._overflowPanelOpen) return;
-
-        // Mark closed immediately to prevent re-entrant calls
-        this._overflowPanelOpen = false;
-
-        // Reset DND state
-        if (this._dndSource) {
-            this._dndSource.actor.opacity = 255;
-            this._dndSource = null;
-        }
-        this._dndDragging = false;
-        this._destroyDndClone();
-        this._clearDropHighlight();
-
-        // Disconnect captured-event BEFORE popModal
-        if (this._capturedEventId) {
-            global.stage.disconnect(this._capturedEventId);
-            this._capturedEventId = 0;
-        }
-
-        if (this._overflowModalPushed) {
-            Main.popModal(this._overflowPanel);
-            this._overflowModalPushed = false;
-        }
-
-        // Move icons back to their proper containers before hiding
-        this._depopulateOverflowPopup();
-
-        this._overflowPanel.hide();
-
-        // Update chevron direction
-        if (this._overflowIndicator) {
-            let icon = this._overflowIndicator.get_child();
-            if (icon) icon.icon_name = 'pan-down-symbolic';
-        }
-    }
-
-    _populateOverflowPopup() {
-        // Show all icons in the popup organized by section
-        // Panel icons go in the visible section, overflow icons in the overflow section
-        let allIcons = Array.from(this._managedIcons.values());
-        let { panel, overflow } = helpers.classifyIcons(
-            allIcons,
-            this.iconVisibility || {},
-            this.defaultVisibility || 'panel',
-            this.iconOrder || []
-        );
-
-        // Reparent panel icons into visible section
-        for (let managed of panel) {
-            let parent = managed.actor.get_parent();
-            if (parent) parent.remove_child(managed.actor);
-            this._overflowVisibleSection.add_actor(managed.actor);
-        }
-
-        // Overflow icons should already be in overflow section from _redistributeIcons,
-        // but ensure they are
-        for (let managed of overflow) {
-            let parent = managed.actor.get_parent();
-            if (parent && parent !== this._overflowOverflowSection) {
-                parent.remove_child(managed.actor);
-            }
-            if (!managed.actor.get_parent()) {
-                this._overflowOverflowSection.add_actor(managed.actor);
-            }
-        }
-    }
-
-    _depopulateOverflowPopup() {
-        // Move icons back to their proper homes
-        this._redistributeIcons();
-    }
-
-    _calcOverflowPanelPosition() {
-        let alloc = Cinnamon.util_get_transformed_allocation(this.actor);
-        let monitor = Main.layoutManager.findMonitorForActor(this.actor);
-
-        let [, pw] = this._overflowPanel.get_preferred_width(-1);
-        let [, ph] = this._overflowPanel.get_preferred_height(pw);
-
-        let orientStr = (this.orientation === St.Side.TOP) ? 'top' : 'bottom';
-        return helpers.calcOverflowPanelPosition(
-            { x1: alloc.x1, y1: alloc.y1, x2: alloc.x2, y2: alloc.y2 },
-            { width: pw, height: ph },
-            monitor,
-            orientStr
-        );
-    }
-
-    _isInsideActor(x, y, actor) {
-        if (!actor) return false;
-        let [ax, ay] = actor.get_transformed_position();
-        let [aw, ah] = actor.get_transformed_size();
-        return (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah);
-    }
-
-    _onOverflowCapturedEvent(event) {
-        let type = event.type();
-
-        // Escape key closes
-        if (type === Clutter.EventType.KEY_PRESS) {
-            if (event.get_key_symbol() === Clutter.KEY_Escape) {
-                this._closeOverflowPanel();
-                return Clutter.EVENT_STOP;
-            }
-        }
-
-        // Route button and motion events through the popup handlers.
-        // pushModal prevents events from reaching the panel's own signal
-        // handlers, so we dispatch directly from captured-event.
-        if (type === Clutter.EventType.BUTTON_PRESS) {
-            let [ex, ey] = event.get_coords();
-
-            let insidePanel = this._isInsideActor(ex, ey, this._overflowPanel);
-            let insideChevron = this._isInsideActor(ex, ey, this._overflowIndicator);
-
-            if (insideChevron) {
-                this._closeOverflowPanel();
-                return Clutter.EVENT_STOP;
-            }
-
-            if (insidePanel) {
-                return this._onPopupButtonPress(this._overflowPanel, event);
-            }
-
-            // Click outside closes
-            this._closeOverflowPanel();
-            return Clutter.EVENT_STOP;
-        }
-
-        if (type === Clutter.EventType.BUTTON_RELEASE) {
-            let [ex, ey] = event.get_coords();
-            let insidePanel = this._isInsideActor(ex, ey, this._overflowPanel);
-            if (insidePanel || this._dndSource) {
-                return this._onPopupButtonRelease(this._overflowPanel, event);
-            }
-        }
-
-        if (type === Clutter.EventType.MOTION) {
-            if (this._dndSource) {
-                return this._onPopupMotion(this._overflowPanel, event);
-            }
-        }
-
-        return Clutter.EVENT_PROPAGATE;
-    }
-
-    // ── DND (Phase 3) ───────────────────────────────────────────────────
-
-    _setIconVisibility(iconId, visibility) {
-        let prefs = this.iconVisibility || {};
-        prefs[iconId] = visibility;
-        this.settings.setValue('icon-visibility', prefs);
-    }
-
-    _setIconOrder(orderArray) {
-        this.settings.setValue('icon-order', orderArray);
-    }
-
-    /**
-     * Find which managed icon owns the given actor (or is an ancestor of it).
-     * Returns the managed icon entry or null.
-     */
-    _findManagedIconForActor(actor) {
-        for (let [id, managed] of this._managedIcons) {
-            if (managed.actor === actor || managed.actor.contains(actor)) {
-                return managed;
-            }
-        }
-        return null;
-    }
-
-    /**
-     * Find which section an actor belongs to: "panel" or "overflow" or null.
-     */
-    _findActorSection(actor) {
-        if (this._overflowVisibleSection && this._overflowVisibleSection.contains(actor)) {
-            return 'panel';
-        }
-        if (this._overflowOverflowSection && this._overflowOverflowSection.contains(actor)) {
-            return 'overflow';
-        }
-        return null;
-    }
-
-    /**
-     * Handle button-press in the overflow popup.
-     * Records the press position and source icon for deferred forwarding.
-     */
-    _onPopupButtonPress(actor, event) {
-        let [x, y] = event.get_coords();
-        let source = global.stage.get_actor_at_pos(Clutter.PickMode.REACTIVE, x, y);
-        let managed = this._findManagedIconForActor(source);
-
-        if (!managed) return Clutter.EVENT_PROPAGATE;
-
-        this._dndActive = false;
-        this._dndStartX = x;
-        this._dndStartY = y;
-        this._dndSource = managed;
-        this._dndSourceSection = this._findActorSection(managed.actor);
-        this._dndPressEvent = event;
-        this._dndDragging = false;
-
-        // Don't forward yet — wait to see if this becomes a drag
-        return Clutter.EVENT_STOP;
-    }
-
-    /**
-     * Handle motion in the overflow popup during a potential drag.
-     * If movement exceeds threshold, start visual drag feedback.
-     */
-    _onPopupMotion(actor, event) {
-        if (!this._dndSource) return Clutter.EVENT_PROPAGATE;
-
-        let [x, y] = event.get_coords();
-
-        if (!this._dndDragging) {
-            if (helpers.exceedsDragThreshold(this._dndStartX, this._dndStartY, x, y, DRAG_THRESHOLD)) {
-                this._dndDragging = true;
-                // Visual feedback: make source semi-transparent and create drag clone
-                this._dndSource.actor.opacity = 128;
-                this._createDndClone(this._dndSource.actor, x, y);
-            }
-        }
-
-        if (this._dndDragging) {
-            this._updateDropHighlight(x, y);
-            this._positionDndClone(x, y);
-        }
-
-        return Clutter.EVENT_STOP;
-    }
-
-    /**
-     * Handle button-release in the overflow popup.
-     * If drag was active: handle the drop (promote/demote/reorder).
-     * If no drag: forward as a normal click to the icon.
-     */
-    _onPopupButtonRelease(actor, event) {
-        if (!this._dndSource) return Clutter.EVENT_PROPAGATE;
-
-        let managed = this._dndSource;
-        let wasDragging = this._dndDragging;
-
-        // Reset drag state
-        managed.actor.opacity = 255;
-        this._destroyDndClone();
-        this._clearDropHighlight();
-        this._dndSource = null;
-        this._dndDragging = false;
-
-        if (wasDragging) {
-            // Handle the drop
-            let [x, y] = event.get_coords();
-            this._handleDrop(managed, x, y);
-            return Clutter.EVENT_STOP;
-        } else {
-            // Forward as normal click — close the popup first, then let the
-            // icon handle the event naturally. For XApp icons, we call
-            // the proxy methods directly. For XEmbed, we use handle_event.
-            this._closeOverflowPanel();
-
-            if (managed.protocol === 'xapp' && managed.xappIcon) {
-                let xappIcon = managed.xappIcon;
-                let [px, py, po] = xappIcon.getEventPositionInfo(managed.actor);
-                let button = event.get_button();
-                let time = event.get_time();
-                xappIcon.proxy.call_button_press(px, py, button, time, po, null, null);
-                xappIcon.proxy.call_button_release(px, py, button, time, po, null, null);
-            } else if (managed.protocol === 'xembed') {
-                // For XEmbed, forward the original press + this release
-                let icon = managed.actor.child;
-                if (icon && !icon.is_finalized()) {
-                    let etype = event.type();
-                    icon.handle_event(Clutter.EventType.BUTTON_PRESS, this._dndPressEvent || event);
-                    icon.handle_event(etype, event);
-                }
-            }
-            this._dndPressEvent = null;
-            return Clutter.EVENT_STOP;
-        }
-    }
-
-    /**
-     * Process a drop after DND: promote, demote, or reorder.
-     */
-    _handleDrop(managed, dropX, dropY) {
-        let targetSection = this._getDropSection(dropX, dropY);
-        let sourceSection = this._dndSourceSection || 'panel';
-
-        if (targetSection === sourceSection && targetSection === 'panel') {
-            // Reorder within panel section
-            let panelIcons = this._getPanelIconOrder();
-            let bounds = this._getSectionIconBounds(this._overflowVisibleSection);
-            // Convert drop coords to section-relative
-            let [sx, sy] = this._overflowVisibleSection.get_transformed_position();
-            let relX = dropX - sx;
-            let relY = dropY - sy;
-            let newIndex = helpers.findClosestIconIndex(bounds, relX, relY);
-            let newOrder = helpers.reorderIcon(panelIcons, managed.id, newIndex);
-            this._setIconOrder(newOrder);
-        } else if (targetSection !== sourceSection) {
-            // Move between sections: promote or demote
-            this._setIconVisibility(managed.id, targetSection);
-
-            // If promoting to panel, add to icon-order
-            if (targetSection === 'panel') {
-                let order = this.iconOrder || [];
-                if (!order.includes(managed.id)) {
-                    order.push(managed.id);
-                    this._setIconOrder(order);
-                }
-            }
-        }
-        // _redistributeIcons will be triggered by settings change callback
-    }
-
-    /**
-     * Determine which section a drop coordinate falls in.
-     */
-    _getDropSection(x, y) {
-        if (!this._overflowOverflowSection) return 'panel';
-
-        let [, oy] = this._overflowOverflowSection.get_transformed_position();
-        return y >= oy ? 'overflow' : 'panel';
-    }
-
-    /**
-     * Get current panel icon IDs in order.
-     */
-    _getPanelIconOrder() {
-        let allIcons = Array.from(this._managedIcons.values());
-        let { panel } = helpers.classifyIcons(
-            allIcons,
-            this.iconVisibility || {},
-            this.defaultVisibility || 'panel',
-            this.iconOrder || []
-        );
-        return panel.map(i => i.id);
-    }
-
-    /**
-     * Get bounding boxes of icons in a section container (section-relative coords).
-     */
-    _getSectionIconBounds(section) {
-        if (!section) return [];
-        let children = section.get_children();
-        let bounds = [];
-        for (let child of children) {
-            if (!child.visible) continue;
-            let alloc = child.get_allocation_box();
-            bounds.push({
-                x: alloc.x1,
-                y: alloc.y1,
-                width: alloc.x2 - alloc.x1,
-                height: alloc.y2 - alloc.y1
-            });
-        }
-        return bounds;
-    }
-
-    /**
-     * Create a clone of the dragged icon that follows the cursor.
-     */
-    _createDndClone(sourceActor, x, y) {
-        this._destroyDndClone();
-        this._dndClone = new Clutter.Clone({ source: sourceActor });
-        this._dndClone.set_opacity(200);
-        global.stage.add_child(this._dndClone);
-        this._dndClone.raise_top();
-        this._positionDndClone(x, y);
-    }
-
-    /**
-     * Position the drag clone centered on the cursor.
-     */
-    _positionDndClone(x, y) {
-        if (!this._dndClone) return;
-        let [w, h] = this._dndClone.get_size();
-        this._dndClone.set_position(Math.round(x - w / 2), Math.round(y - h / 2));
-    }
-
-    /**
-     * Remove the drag clone from the stage.
-     */
-    _destroyDndClone() {
-        if (this._dndClone) {
-            if (this._dndClone.get_parent()) {
-                this._dndClone.get_parent().remove_child(this._dndClone);
-            }
-            this._dndClone.destroy();
-            this._dndClone = null;
-        }
-    }
-
-    /**
-     * Update visual highlight to indicate which section is the drop target.
-     */
-    _updateDropHighlight(x, y) {
-        this._clearDropHighlight();
-        let section = this._getDropSection(x, y);
-        if (section === 'panel' && this._overflowVisibleSection) {
-            this._overflowVisibleSection.add_style_class_name('systray-overflow-drop-highlight');
-        } else if (section === 'overflow' && this._overflowOverflowSection) {
-            this._overflowOverflowSection.add_style_class_name('systray-overflow-drop-highlight');
-        }
-    }
-
-    /**
-     * Remove drop highlight from both sections.
-     */
-    _clearDropHighlight() {
-        if (this._overflowVisibleSection) {
-            this._overflowVisibleSection.remove_style_class_name('systray-overflow-drop-highlight');
-        }
-        if (this._overflowOverflowSection) {
-            this._overflowOverflowSection.remove_style_class_name('systray-overflow-drop-highlight');
-        }
-    }
+    // Popup methods are in popup-manager.js (this._popup)
 }
 
 function main(metadata, orientation, panel_height, instance_id) {

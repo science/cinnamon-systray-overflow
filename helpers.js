@@ -188,10 +188,94 @@ function reorderIcon(currentOrder, iconId, newIndex) {
     return order;
 }
 
+/**
+ * Calculate the explicit height for a popup section based on child count
+ * and grid layout parameters. Bypasses FlowLayout's stale preferred-height
+ * cache that causes 0-height on close→reopen cycles.
+ *
+ * @param {number} nChildren - Number of children in the section
+ * @param {number} iconsPerRow - Number of icons per row
+ * @param {number} iconCell - Size of one icon cell (icon_size + padding)
+ * @param {number} spacing - Spacing between rows
+ * @returns {number} Computed height in pixels, or 0 if no children
+ */
+function calcSectionHeight(nChildren, iconsPerRow, iconCell, spacing) {
+    if (nChildren <= 0) return 0;
+    let rows = Math.ceil(nChildren / iconsPerRow);
+    return rows * iconCell + (rows - 1) * spacing;
+}
+
+/**
+ * Calculate the total popup panel height from section heights and layout constants.
+ * Replaces get_preferred_height which returns stale data on first open.
+ *
+ * @param {Array<number>} sectionHeights - Heights of each visible section
+ * @param {number} nLabels - Number of visible section labels
+ * @param {number} labelHeight - Height of each label (px)
+ * @param {number} boxSpacing - InnerBox spacing between children (px)
+ * @param {number} panelPadding - Total vertical padding+border of popup panel (px)
+ * @returns {number} Computed panel height in pixels
+ */
+function calcPopupHeight(sectionHeights, nLabels, labelHeight, boxSpacing, panelPadding) {
+    let totalSections = sectionHeights.reduce((a, b) => a + b, 0);
+    let nChildren = nLabels + sectionHeights.length;
+    let nGaps = Math.max(0, nChildren - 1);
+    return panelPadding + nLabels * labelHeight + totalSections + nGaps * boxSpacing;
+}
+
+/**
+ * DND state machine states.
+ */
+var DND_STATE = Object.freeze({
+    IDLE: 'idle',
+    PRESSED: 'pressed',
+    DRAGGING: 'dragging'
+});
+
+/**
+ * Pure DND state transition function.
+ * Given a current state and an action, returns the next state.
+ *
+ * Valid transitions:
+ *   IDLE    + press              → PRESSED
+ *   PRESSED + threshold-exceeded → DRAGGING
+ *   PRESSED + release            → IDLE  (action: 'click')
+ *   DRAGGING + release           → IDLE  (action: 'drop')
+ *   any     + close              → IDLE  (action: 'reset')
+ *
+ * @param {string} currentState - One of DND_STATE values
+ * @param {string} action - 'press', 'threshold-exceeded', 'release', or 'close'
+ * @returns {{ valid: boolean, state?: string, action?: string }}
+ */
+function dndTransition(currentState, action) {
+    if (action === 'close') {
+        return { valid: true, state: DND_STATE.IDLE, action: 'reset' };
+    }
+
+    if (currentState === DND_STATE.IDLE && action === 'press') {
+        return { valid: true, state: DND_STATE.PRESSED };
+    }
+
+    if (currentState === DND_STATE.PRESSED && action === 'threshold-exceeded') {
+        return { valid: true, state: DND_STATE.DRAGGING };
+    }
+
+    if (currentState === DND_STATE.PRESSED && action === 'release') {
+        return { valid: true, state: DND_STATE.IDLE, action: 'click' };
+    }
+
+    if (currentState === DND_STATE.DRAGGING && action === 'release') {
+        return { valid: true, state: DND_STATE.IDLE, action: 'drop' };
+    }
+
+    return { valid: false };
+}
+
 // Dual-runtime export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         classifyIcons, xappProxyToId, dropTargetSection, calcOverflowPanelPosition,
-        exceedsDragThreshold, findClosestIconIndex, reorderIcon
+        exceedsDragThreshold, findClosestIconIndex, reorderIcon,
+        calcSectionHeight, calcPopupHeight, DND_STATE, dndTransition
     };
 }

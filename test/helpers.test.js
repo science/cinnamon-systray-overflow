@@ -1,7 +1,8 @@
 const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { classifyIcons, xappProxyToId, dropTargetSection, calcOverflowPanelPosition,
-        exceedsDragThreshold, findClosestIconIndex, reorderIcon } = require('../helpers');
+        exceedsDragThreshold, findClosestIconIndex, reorderIcon,
+        calcSectionHeight, calcPopupHeight, DND_STATE, dndTransition } = require('../helpers');
 
 describe('classifyIcons', () => {
     it('puts all icons in panel when no prefs and default is panel', () => {
@@ -263,5 +264,130 @@ describe('reorderIcon', () => {
 
     it('no-op when icon is already at target position', () => {
         assert.deepEqual(reorderIcon(['a', 'b', 'c'], 'b', 1), ['a', 'b', 'c']);
+    });
+});
+
+describe('DND_STATE', () => {
+    it('exports IDLE, PRESSED, DRAGGING states', () => {
+        assert.equal(DND_STATE.IDLE, 'idle');
+        assert.equal(DND_STATE.PRESSED, 'pressed');
+        assert.equal(DND_STATE.DRAGGING, 'dragging');
+    });
+});
+
+describe('dndTransition', () => {
+    it('IDLE + press → PRESSED', () => {
+        let result = dndTransition(DND_STATE.IDLE, 'press');
+        assert.equal(result.valid, true);
+        assert.equal(result.state, DND_STATE.PRESSED);
+    });
+
+    it('PRESSED + threshold-exceeded → DRAGGING', () => {
+        let result = dndTransition(DND_STATE.PRESSED, 'threshold-exceeded');
+        assert.equal(result.valid, true);
+        assert.equal(result.state, DND_STATE.DRAGGING);
+    });
+
+    it('PRESSED + release → IDLE (click)', () => {
+        let result = dndTransition(DND_STATE.PRESSED, 'release');
+        assert.equal(result.valid, true);
+        assert.equal(result.state, DND_STATE.IDLE);
+        assert.equal(result.action, 'click');
+    });
+
+    it('DRAGGING + release → IDLE (drop)', () => {
+        let result = dndTransition(DND_STATE.DRAGGING, 'release');
+        assert.equal(result.valid, true);
+        assert.equal(result.state, DND_STATE.IDLE);
+        assert.equal(result.action, 'drop');
+    });
+
+    it('any state + close → IDLE (reset)', () => {
+        for (let s of [DND_STATE.IDLE, DND_STATE.PRESSED, DND_STATE.DRAGGING]) {
+            let result = dndTransition(s, 'close');
+            assert.equal(result.valid, true, `close from ${s} should be valid`);
+            assert.equal(result.state, DND_STATE.IDLE, `close from ${s} should go to IDLE`);
+            assert.equal(result.action, 'reset', `close from ${s} should produce reset`);
+        }
+    });
+
+    it('returns invalid for IDLE + release', () => {
+        let result = dndTransition(DND_STATE.IDLE, 'release');
+        assert.equal(result.valid, false);
+    });
+
+    it('returns invalid for IDLE + threshold-exceeded', () => {
+        let result = dndTransition(DND_STATE.IDLE, 'threshold-exceeded');
+        assert.equal(result.valid, false);
+    });
+
+    it('returns invalid for DRAGGING + press', () => {
+        let result = dndTransition(DND_STATE.DRAGGING, 'press');
+        assert.equal(result.valid, false);
+    });
+
+    it('returns invalid for unknown action', () => {
+        let result = dndTransition(DND_STATE.IDLE, 'fly');
+        assert.equal(result.valid, false);
+    });
+});
+
+describe('calcSectionHeight', () => {
+    it('returns 0 for no children', () => {
+        assert.equal(calcSectionHeight(0, 4, 32, 4), 0);
+    });
+
+    it('returns 0 for negative children', () => {
+        assert.equal(calcSectionHeight(-1, 4, 32, 4), 0);
+    });
+
+    it('computes single row correctly', () => {
+        // 3 icons, 4 per row → 1 row → 1*32 + 0*4 = 32
+        assert.equal(calcSectionHeight(3, 4, 32, 4), 32);
+    });
+
+    it('computes exact full row correctly', () => {
+        // 4 icons, 4 per row → 1 row → 32
+        assert.equal(calcSectionHeight(4, 4, 32, 4), 32);
+    });
+
+    it('computes multiple rows correctly', () => {
+        // 5 icons, 4 per row → 2 rows → 2*32 + 1*4 = 68
+        assert.equal(calcSectionHeight(5, 4, 32, 4), 68);
+    });
+
+    it('computes three rows correctly', () => {
+        // 9 icons, 4 per row → 3 rows → 3*32 + 2*4 = 104
+        assert.equal(calcSectionHeight(9, 4, 32, 4), 104);
+    });
+
+    it('works with real icon_size + padding values', () => {
+        // icon_size=24, cell=24+8=32, spacing=4, 6 icons, 4 per row
+        // 2 rows → 2*32 + 1*4 = 68
+        assert.equal(calcSectionHeight(6, 4, 32, 4), 68);
+    });
+});
+
+describe('calcPopupHeight', () => {
+    it('computes 3-section popup height (196 = 16 + 54 + 96 + 30)', () => {
+        // 3 sections each 32px, 3 labels, label=18, spacing=6, padding=16
+        // 16 + 3*18 + 32+32+32 + (6-1)*6 = 16 + 54 + 96 + 30 = 196
+        assert.equal(calcPopupHeight([32, 32, 32], 3, 18, 6, 16), 196);
+    });
+
+    it('computes 2-section popup height (inactive hidden)', () => {
+        // 2 sections each 32px, 2 labels
+        // 16 + 2*18 + 32+32 + (4-1)*6 = 16 + 36 + 64 + 18 = 134
+        assert.equal(calcPopupHeight([32, 32], 2, 18, 6, 16), 134);
+    });
+
+    it('computes multi-row overflow section', () => {
+        // sections: 32, 68, 32 — overflow has 2 rows
+        // 16 + 3*18 + 32+68+32 + (6-1)*6 = 16 + 54 + 132 + 30 = 232
+        assert.equal(calcPopupHeight([32, 68, 32], 3, 18, 6, 16), 232);
+    });
+
+    it('returns just padding for empty popup', () => {
+        assert.equal(calcPopupHeight([], 0, 18, 6, 16), 16);
     });
 });

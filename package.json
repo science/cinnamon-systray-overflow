@@ -7,7 +7,11 @@
     "test": "test"
   },
   "scripts": {
-    "test": "node --test test/*.test.js"
+    "test": "node --test test/*.test.js",
+    "test:vm": "bash test/vm-smoke-test.sh",
+    "test:vm:setup": "bash vm/vm-setup-test-env.sh",
+    "test:e2e": "bash test/vm-e2e-test.sh",
+    "test:all": "node --test test/*.test.js && bash test/vm-smoke-test.sh"
   },
   "keywords": [],
   "author": "",

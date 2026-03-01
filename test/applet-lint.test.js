@@ -15,19 +15,19 @@ describe('applet.js cleanup on removal', () => {
     });
 
     it('destroys managed icons in cleanup', () => {
-        assert.ok(appletSrc.includes('_managedIcons.clear'), 'must clear managed icons');
+        assert.ok(appletSrc.includes('_registry.clear'), 'must clear managed icons');
     });
 
     it('destroys recording indicator in cleanup', () => {
         assert.ok(appletSrc.includes('_recording_indicator.destroy'), 'must destroy recorder');
     });
 
-    it('closes overflow panel in cleanup', () => {
-        assert.ok(appletSrc.includes('_closeOverflowPanel'), 'must close overflow on removal');
+    it('closes popup via _popup.closePanel() in cleanup', () => {
+        assert.ok(appletSrc.includes('_popup.closePanel()'), 'must close popup on removal');
     });
 
-    it('destroys overflow UI in cleanup', () => {
-        assert.ok(appletSrc.includes('_destroyOverflowUI'), 'must destroy overflow UI on removal');
+    it('destroys overflow UI via _popup.destroyOverflowUI() in cleanup', () => {
+        assert.ok(appletSrc.includes('_popup.destroyOverflowUI()'), 'must destroy overflow UI on removal');
     });
 });
 
@@ -70,8 +70,7 @@ describe('applet.js XEmbed protocol', () => {
     });
 
     it('guards begin_modal against nesting with overflow popup', () => {
-        // Must check _overflowPanelOpen before begin_modal
-        assert.ok(appletSrc.includes('_overflowPanelOpen'), 'must guard modal nesting');
+        assert.ok(appletSrc.includes('_popup.isOpen()'), 'must guard modal nesting via popup');
     });
 
     it('uses handle_event for XEmbed icons', () => {
@@ -109,75 +108,6 @@ describe('applet.js XApp protocol', () => {
     });
 });
 
-describe('applet.js overflow UI', () => {
-    it('has _ensureOverflowUI method', () => {
-        assert.ok(appletSrc.includes('_ensureOverflowUI'), 'missing overflow UI setup');
-    });
-
-    it('has _destroyOverflowUI method', () => {
-        assert.ok(appletSrc.includes('_destroyOverflowUI'), 'missing overflow UI teardown');
-    });
-
-    it('has _closeOverflowPanel method', () => {
-        assert.ok(appletSrc.includes('_closeOverflowPanel'), 'missing close method');
-    });
-
-    it('has _openOverflowPanel method', () => {
-        assert.ok(appletSrc.includes('_openOverflowPanel'), 'missing open method');
-    });
-
-    it('has _redistributeIcons method', () => {
-        assert.ok(appletSrc.includes('_redistributeIcons'), 'missing redistribute method');
-    });
-
-    it('places overflow panel on global.stage', () => {
-        assert.ok(appletSrc.includes('global.stage.add_child'), 'must use global.stage for popup');
-    });
-
-    it('removes overflow panel from global.stage on destroy', () => {
-        assert.ok(appletSrc.includes('global.stage.remove_child'), 'must remove from stage');
-    });
-
-    it('uses pushModal for input routing', () => {
-        assert.ok(appletSrc.includes('Main.pushModal'), 'must use pushModal');
-    });
-
-    it('uses popModal on close', () => {
-        assert.ok(appletSrc.includes('Main.popModal'), 'must use popModal');
-    });
-
-    it('uses captured-event for click-outside detection and event routing', () => {
-        assert.ok(appletSrc.includes("'captured-event'"), 'must use captured-event');
-    });
-
-    it('routes button events from captured-event to popup handlers', () => {
-        // pushModal prevents events from reaching panel signal handlers,
-        // so captured-event must dispatch to _onPopupButtonPress/_onPopupButtonRelease
-        let methodStart = appletSrc.indexOf('_onOverflowCapturedEvent(event) {');
-        assert.ok(methodStart > 0, 'captured event handler not found');
-        let method = appletSrc.substring(methodStart, methodStart + 1800);
-        assert.ok(method.includes('_onPopupButtonPress'), 'must route press to popup handler');
-        assert.ok(method.includes('_onPopupButtonRelease'), 'must route release to popup handler');
-        assert.ok(method.includes('_onPopupMotion'), 'must route motion to popup handler');
-    });
-
-    it('handles Escape key to close', () => {
-        assert.ok(appletSrc.includes('KEY_Escape'), 'must handle Escape key');
-    });
-
-    it('disconnects captured-event before popModal', () => {
-        // The disconnect must come before popModal in _closeOverflowPanel method body
-        let methodStart = appletSrc.indexOf('_closeOverflowPanel() {');
-        assert.ok(methodStart > 0, '_closeOverflowPanel method not found');
-        let closeMethod = appletSrc.substring(methodStart, methodStart + 900);
-        let disconnectIdx = closeMethod.indexOf('stage.disconnect');
-        // Find Main.popModal (the actual call, not the comment)
-        let popModalIdx = closeMethod.indexOf('Main.popModal');
-        assert.ok(disconnectIdx > 0 && popModalIdx > 0, 'both disconnect and popModal must exist');
-        assert.ok(disconnectIdx < popModalIdx, 'disconnect must come before popModal');
-    });
-});
-
 describe('applet.js settings', () => {
     it('uses Settings.AppletSettings', () => {
         assert.ok(appletSrc.includes('Settings.AppletSettings'), 'must use AppletSettings');
@@ -195,90 +125,76 @@ describe('applet.js settings', () => {
         assert.ok(appletSrc.includes("'default-visibility'"), 'must bind default-visibility');
     });
 
+    it('binds disabled-applets setting', () => {
+        assert.ok(appletSrc.includes("'disabled-applets'"), 'must bind disabled-applets');
+    });
+
     it('uses correct UUID for settings', () => {
         assert.ok(appletSrc.includes("'systray-overflow@cinnamon'"), 'must use correct UUID');
     });
 });
 
-describe('applet.js uses helpers module', () => {
+describe('applet.js module integration', () => {
     it('requires helpers.js', () => {
         assert.ok(appletSrc.includes("require('./helpers')"), 'must require helpers');
     });
 
-    it('uses classifyIcons from helpers', () => {
-        assert.ok(appletSrc.includes('classifyIcons'), 'must use classifyIcons');
+    it('requires icon-registry.js', () => {
+        assert.ok(appletSrc.includes("require('./icon-registry')"), 'must require icon-registry');
+    });
+
+    it('requires system-applet-proxy.js', () => {
+        assert.ok(appletSrc.includes("require('./system-applet-proxy')"), 'must require system-applet-proxy');
+    });
+
+    it('requires dnd-handler.js', () => {
+        assert.ok(appletSrc.includes("require('./dnd-handler')"), 'must require dnd-handler');
+    });
+
+    it('requires popup-manager.js', () => {
+        assert.ok(appletSrc.includes("require('./popup-manager')"), 'must require popup-manager');
+    });
+
+    it('creates IconRegistry instance', () => {
+        assert.ok(appletSrc.includes('new IconRegistry('), 'must create IconRegistry');
+    });
+
+    it('creates SystemAppletProxy instance', () => {
+        assert.ok(appletSrc.includes('new SystemAppletProxy('), 'must create SystemAppletProxy');
+    });
+
+    it('creates DndHandler instance', () => {
+        assert.ok(appletSrc.includes('new DndHandler('), 'must create DndHandler');
+    });
+
+    it('creates PopupManager instance', () => {
+        assert.ok(appletSrc.includes('new PopupManager('), 'must create PopupManager');
     });
 
     it('uses xappProxyToId from helpers', () => {
         assert.ok(appletSrc.includes('xappProxyToId'), 'must use xappProxyToId');
     });
-
-    it('uses calcOverflowPanelPosition from helpers', () => {
-        assert.ok(appletSrc.includes('calcOverflowPanelPosition'), 'must use position calc');
-    });
 });
 
 describe('applet.js managed icons', () => {
-    it('uses a Map for managed icons', () => {
-        assert.ok(appletSrc.includes('new Map()'), 'must use Map for icon tracking');
-    });
-
     it('tracks icon protocol type', () => {
         assert.ok(appletSrc.includes("protocol: 'xembed'"), 'must track xembed protocol');
         assert.ok(appletSrc.includes("protocol: 'xapp'"), 'must track xapp protocol');
     });
-});
 
-describe('applet.js DND promote/demote', () => {
-    it('has _setIconVisibility method', () => {
-        assert.ok(appletSrc.includes('_setIconVisibility'), 'missing visibility setter');
+    it('redistributes icons when new icon appears', () => {
+        assert.ok(appletSrc.includes('this._registry.redistributeIcons()'), 'must redistribute on add');
     });
 
-    it('has _setIconOrder method', () => {
-        assert.ok(appletSrc.includes('_setIconOrder'), 'missing order setter');
-    });
-
-    it('persists icon-visibility via settings', () => {
-        assert.ok(appletSrc.includes("setValue('icon-visibility'"), 'must persist visibility');
-    });
-
-    it('persists icon-order via settings', () => {
-        assert.ok(appletSrc.includes("setValue('icon-order'"), 'must persist order');
-    });
-
-    it('has DRAG_THRESHOLD constant', () => {
-        assert.ok(appletSrc.includes('DRAG_THRESHOLD'), 'must define drag threshold');
-    });
-
-    it('has _onPopupButtonPress handler', () => {
-        assert.ok(appletSrc.includes('_onPopupButtonPress'), 'missing button press handler for DND');
-    });
-
-    it('has _onPopupMotion handler', () => {
-        assert.ok(appletSrc.includes('_onPopupMotion'), 'missing motion handler for DND');
-    });
-
-    it('has _onPopupButtonRelease handler', () => {
-        assert.ok(appletSrc.includes('_onPopupButtonRelease'), 'missing button release handler for DND');
-    });
-
-    it('uses exceedsDragThreshold from helpers', () => {
-        assert.ok(appletSrc.includes('exceedsDragThreshold'), 'must use threshold helper');
-    });
-
-    it('creates a drag clone actor that follows cursor during DND', () => {
-        assert.ok(appletSrc.includes('_dndClone'), 'must have drag clone for visual feedback');
-        assert.ok(appletSrc.includes('_createDndClone'), 'must create clone on drag start');
-        assert.ok(appletSrc.includes('_destroyDndClone'), 'must clean up clone on release');
-        // The clone must be positioned during motion
-        let motionStart = appletSrc.indexOf('_onPopupMotion(actor, event) {');
-        assert.ok(motionStart > 0, '_onPopupMotion not found');
-        let motionMethod = appletSrc.substring(motionStart, motionStart + 800);
-        assert.ok(motionMethod.includes('_positionDndClone'), 'motion handler must position drag clone');
+    it('redistributes icons when icon is removed', () => {
+        let methodStart = appletSrc.indexOf('_removeXAppIcon(icon_proxy) {');
+        assert.ok(methodStart > 0, '_removeXAppIcon method not found');
+        let method = appletSrc.substring(methodStart, methodStart + 1100);
+        assert.ok(method.includes('_registry.redistributeIcons'), 'must redistribute on XApp remove');
     });
 });
 
-describe('applet.js polish — edge cases', () => {
+describe('applet.js edge cases', () => {
     it('_onBeforeRedisplay clears XEmbed icons', () => {
         assert.ok(appletSrc.includes('_clearXEmbedIcons'), 'must clear XEmbed on redisplay');
     });
@@ -307,43 +223,40 @@ describe('applet.js polish — edge cases', () => {
     it('handles icon theme changes', () => {
         assert.ok(appletSrc.includes('_onIconThemeChanged'), 'must refresh on icon theme change');
     });
+});
 
-    it('always creates overflow UI so chevron is always visible', () => {
-        // _redistributeIcons must always call _ensureOverflowUI (unconditionally)
-        let methodStart = appletSrc.indexOf('_redistributeIcons() {');
-        assert.ok(methodStart > 0, '_redistributeIcons method not found');
-        // Find next method boundary to get full body
-        let nextMethod = appletSrc.indexOf('\n    _', methodStart + 1);
-        let method = appletSrc.substring(methodStart, nextMethod);
-        assert.ok(method.includes('_ensureOverflowUI'), 'must always ensure overflow UI exists');
-        // Must NOT conditionally hide the chevron
-        assert.ok(!method.includes('.hide()'), 'must not conditionally hide chevron');
+describe('applet.js DND state machine (Phase 1A)', () => {
+    it('imports DND_STATE from helpers', () => {
+        assert.ok(appletSrc.includes('DND_STATE'), 'must use DND_STATE from helpers');
     });
 
-    it('redistributes icons when new icon appears', () => {
-        // _onTrayIconAdded and _addXAppIcon must call _redistributeIcons
-        assert.ok(appletSrc.includes('this._redistributeIcons()'), 'must redistribute on add');
+    it('delegates DND to DndHandler module', () => {
+        assert.ok(appletSrc.includes('_dndHandler'), 'must reference DND handler');
+    });
+});
+
+describe('applet.js signal handler guards during popup (Phase 1D)', () => {
+    it('_onBeforeRedisplay defers during popup', () => {
+        let methodStart = appletSrc.indexOf('_onBeforeRedisplay() {');
+        assert.ok(methodStart > 0, '_onBeforeRedisplay not found');
+        let method = appletSrc.substring(methodStart, methodStart + 400);
+        assert.ok(method.includes('_popup.isOpen()'), 'must check popup state');
+        assert.ok(method.includes('_deferredXEmbedClear'), 'must defer XEmbed clear');
     });
 
-    it('redistributes icons when icon is removed', () => {
-        // _removeXAppIcon method body must call _redistributeIcons
+    it('_onTrayIconRemoved defers during popup', () => {
+        let methodStart = appletSrc.indexOf('_onTrayIconRemoved(o, icon) {');
+        assert.ok(methodStart > 0, '_onTrayIconRemoved not found');
+        let method = appletSrc.substring(methodStart, methodStart + 500);
+        assert.ok(method.includes('_popup.isOpen()'), 'must check popup state');
+        assert.ok(method.includes('_pendingIconRemovals'), 'must defer icon removal');
+    });
+
+    it('_removeXAppIcon defers during popup', () => {
         let methodStart = appletSrc.indexOf('_removeXAppIcon(icon_proxy) {');
-        assert.ok(methodStart > 0, '_removeXAppIcon method not found');
-        let removeXApp = appletSrc.substring(methodStart, methodStart + 900);
-        assert.ok(removeXApp.includes('_redistributeIcons'), 'must redistribute on XApp remove');
-    });
-
-    it('clears DND state when popup closes', () => {
-        // _closeOverflowPanel or _depopulateOverflowPopup must handle clean state
-        assert.ok(appletSrc.includes('_depopulateOverflowPopup'), 'must depopulate on close');
-    });
-
-    it('populate moves panel icons into visible section of popup', () => {
-        // _populateOverflowPopup must reparent panel icons into _overflowVisibleSection
-        let methodStart = appletSrc.indexOf('_populateOverflowPopup() {');
-        assert.ok(methodStart > 0, '_populateOverflowPopup method not found');
-        let method = appletSrc.substring(methodStart, methodStart + 1300);
-        assert.ok(method.includes('_overflowVisibleSection.add_actor'), 'must add panel icons to visible section');
-        assert.ok(method.includes('_overflowOverflowSection.add_actor'), 'must add overflow icons to overflow section');
+        assert.ok(methodStart > 0, '_removeXAppIcon not found');
+        let method = appletSrc.substring(methodStart, methodStart + 400);
+        assert.ok(method.includes('_popup.isOpen()'), 'must check popup state');
+        assert.ok(method.includes('_pendingIconRemovals'), 'must defer icon removal');
     });
 });

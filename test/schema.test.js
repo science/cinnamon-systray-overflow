@@ -78,4 +78,12 @@ describe('settings-schema.json', () => {
     it('has overflow section', () => {
         assert.equal(schema['section-overflow'].type, 'section');
     });
+
+    it('has disabled-applets as generic type', () => {
+        assert.equal(schema['disabled-applets'].type, 'generic');
+    });
+
+    it('disabled-applets defaults to empty object', () => {
+        assert.deepEqual(schema['disabled-applets'].default, {});
+    });
 });

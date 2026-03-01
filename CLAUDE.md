@@ -19,6 +19,7 @@ Cinnamon 6.0.4 desktop applet that combines `systray@cinnamon.org` (XEmbed) and 
 | `stylesheet.css` | Overflow popup styling |
 | `install.sh` | Install with validation — warns about removing BOTH stock applets |
 | `uninstall.sh` | Safe removal — warns about re-enabling stock applets |
+| `dev-deploy.sh` | Deploy to VM for UAT — installs, swaps stock applets, restarts Cinnamon, opens SPICE viewer |
 | `test/helpers.test.js` | Unit tests for helper functions |
 | `test/schema.test.js` | Settings schema + metadata validation tests |
 | `test/applet-lint.test.js` | Static safety checks on applet.js |
@@ -26,7 +27,11 @@ Cinnamon 6.0.4 desktop applet that combines `systray@cinnamon.org` (XEmbed) and 
 
 ## Commands
 
+- **Dev deploy (UAT)**: `./dev-deploy.sh` (deploys to VM, swaps stock applets, restarts Cinnamon, opens SPICE viewer)
+- **Dev reload**: `./dev-deploy.sh --restart` (just restarts Cinnamon on VM after code changes)
+- **Dev undeploy**: `./dev-deploy.sh --uninstall` (restores stock applets on VM)
 - **Run tests**: `npm test` (Node.js 18+)
+- **Run E2E tests**: `npm run test:e2e` (VM must be running with test env)
 - **Install**: `./install.sh` (validates files, creates symlink, warns about stock applet conflicts)
 - **Uninstall**: `./uninstall.sh` (removes from dconf + deletes symlink; safe from TTY)
 - **Restart Cinnamon**: `Alt+F2 -> r -> Enter` or from TTY: `DISPLAY=:0 cinnamon --replace &`
@@ -49,6 +54,36 @@ Cinnamon 6.0.4 desktop applet that combines `systray@cinnamon.org` (XEmbed) and 
 - Our applet and stock `xapp-status@cinnamon.org` should not coexist (duplicate XApp icons)
 - XEmbed event handling uses `global.begin_modal`/`end_modal` — must guard against nesting when overflow popup's `pushModal` is already active
 - Stock UUIDs: `systray@cinnamon.org`, `xapp-status@cinnamon.org`
+
+## Testing Requirements — Mandatory for All Material Code Changes
+
+Every material code change (anything beyond trivial comment/whitespace edits) **must** complete the full test pipeline before being considered done:
+
+1. **Unit tests**: `npm test` — all must pass
+2. **VM deploy**: `./dev-deploy.sh --no-viewer` — applet must load without errors
+3. **VM smoke tests**: `npm run test:vm` — all must pass
+4. **VM E2E tests**: `npm run test:e2e` — all must pass
+5. **Visual verification**: Take a VM screenshot, crop the **bottom-right corner** (the panel area where the systray lives), and inspect the cropped image to confirm:
+   - Tray icons render correctly
+   - Chevron is in the expected position (rightmost in the systray area)
+   - Popup anchors and renders correctly (open it, screenshot, crop, inspect)
+
+### Screenshot & Crop Procedure
+
+```bash
+# Capture full VM desktop
+VM_IP=$(./vm/vm-ctl.sh ip) && SSH_OPTS="-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR"
+ssh $SSH_OPTS "steve@$VM_IP" "DISPLAY=:0 gnome-screenshot -f /tmp/screenshot.png"
+scp $SSH_OPTS "steve@$VM_IP:/tmp/screenshot.png" /tmp/systray-full.png
+
+# Crop bottom-right panel area (systray region)
+convert /tmp/systray-full.png -crop 400x50+880+750 /tmp/systray-panel-crop.png
+
+# Crop bottom-right with popup (larger area)
+convert /tmp/systray-full.png -crop 500x300+780+500 /tmp/systray-popup-crop.png
+```
+
+Then use the Read tool on the cropped PNGs to visually inspect them. Do not skip this step — UI bugs (wrong icon positions, broken popups, missing chevrons) are only caught visually.
 
 ## VM Testing
 

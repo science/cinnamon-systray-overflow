@@ -19,5 +19,10 @@
       "Hide in overflow": "overflow"
     },
     "description": "Where to place newly-seen icons"
+  },
+  "disabled-applets": {
+    "type": "generic",
+    "default": {},
+    "description": "Saved enabled-applets entries for system applets moved to overflow"
   }
 }
