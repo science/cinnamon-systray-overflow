@@ -125,6 +125,17 @@ describe('popup-manager.js populate/depopulate', () => {
         assert.ok(method.includes('Clutter.Clone'), 'must use Clutter.Clone');
         assert.ok(method.includes('_managedIconRef'), 'clones must be tagged');
         assert.ok(method.includes('_popupClones'), 'must track clones');
+        assert.ok(method.includes('_getCloneSource'), 'must use inner icon for clone source');
+    });
+
+    it('has _getCloneSource that extracts inner icon', () => {
+        assert.ok(popupSrc.includes('_getCloneSource(managed)'), 'must have _getCloneSource method');
+        let methodStart = popupSrc.indexOf('_getCloneSource(managed) {');
+        assert.ok(methodStart > 0, '_getCloneSource not found');
+        let method = popupSrc.substring(methodStart, methodStart + 500);
+        assert.ok(method.includes('xappIcon'), 'must handle XApp icons');
+        assert.ok(method.includes('icon_holder'), 'must use icon_holder for XApp');
+        assert.ok(method.includes('actor.child'), 'must use actor.child for XEmbed');
     });
 
     it('moves overflow icons to off-screen container for cloning', () => {

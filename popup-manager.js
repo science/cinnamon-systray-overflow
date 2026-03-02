@@ -295,7 +295,8 @@ var PopupManager = class PopupManager {
         for (let managed of panel) {
             if (managed.actor.is_finalized && managed.actor.is_finalized()) continue;
             try {
-                let clone = new Clutter.Clone({ source: managed.actor });
+                let source = this._getCloneSource(managed);
+                let clone = new Clutter.Clone({ source: source });
                 clone.reactive = true;
                 clone._managedIconRef = managed;
                 clone.set_size(cellSize, cellSize);
@@ -309,7 +310,8 @@ var PopupManager = class PopupManager {
         for (let managed of overflow) {
             if (managed.actor.is_finalized && managed.actor.is_finalized()) continue;
             try {
-                let clone = new Clutter.Clone({ source: managed.actor });
+                let source = this._getCloneSource(managed);
+                let clone = new Clutter.Clone({ source: source });
                 clone.reactive = true;
                 clone._managedIconRef = managed;
                 clone.set_size(cellSize, cellSize);
@@ -424,6 +426,23 @@ var PopupManager = class PopupManager {
             monitor,
             orientStr
         );
+    }
+
+    /**
+     * Get the inner icon actor for cloning — avoids cloning the full
+     * panel-height wrapper (28x60) which squashes when scaled to cellSize.
+     */
+    _getCloneSource(managed) {
+        // XApp: clone the icon inside icon_holder, not the panel-height BoxLayout
+        if (managed.xappIcon && managed.xappIcon.icon_holder) {
+            let inner = managed.xappIcon.icon_holder.child;
+            if (inner) return inner;
+        }
+        // XEmbed: clone the CinnamonTrayIcon, not the panel-height St.Bin
+        if (managed.actor.child) {
+            return managed.actor.child;
+        }
+        return managed.actor;
     }
 
     /**
