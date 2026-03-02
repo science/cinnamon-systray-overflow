@@ -331,6 +331,35 @@ else
     test_result "All icons (including hidden) in panelBox" "fail" "some icons not in panelBox"
 fi
 
+# Check applet is positioned right before calendar in enabled-applets
+applet_before_calendar=$(vm_run "dconf read /org/cinnamon/enabled-applets" 2>/dev/null | python3 -c "
+import sys, ast
+try:
+    applets = ast.literal_eval(sys.stdin.read().strip())
+    our_pos = cal_pos = None
+    for a in applets:
+        parts = a.split(':')
+        if len(parts) >= 4:
+            if '$APPLET_UUID' in parts[3]:
+                our_pos = int(parts[2])
+            elif 'calendar@cinnamon.org' in parts[3]:
+                cal_pos = int(parts[2])
+    if our_pos is not None and cal_pos is not None:
+        print('true' if cal_pos == our_pos + 1 else 'false')
+    else:
+        print('missing')
+except:
+    print('error')
+" 2>/dev/null || echo "error")
+
+if [[ "$applet_before_calendar" == "true" ]]; then
+    test_result "Applet positioned right before calendar" "pass"
+elif [[ "$applet_before_calendar" == "missing" ]]; then
+    test_result "Applet positioned right before calendar" "warn" "applet or calendar not found in dconf"
+else
+    test_result "Applet positioned right before calendar" "warn" "not adjacent to calendar (got: $applet_before_calendar)"
+fi
+
 # List icons
 echo -e "  ${CYAN}INFO${NC} managed icons:"
 echo "$state_json" | python3 -c "

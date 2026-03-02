@@ -430,6 +430,9 @@ class SystrayOverflowApplet extends Applet.Applet {
         // ── Deferred icon removal during popup (Phase 1D) ──
         this._deferredXEmbedClear = false;
         this._pendingIconRemovals = [];
+
+        // Create overflow UI (chevron + popup) — once, at init
+        this._popup.ensureOverflowUI();
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────────

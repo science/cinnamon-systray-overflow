@@ -171,6 +171,10 @@ describe('applet.js module integration', () => {
         assert.ok(appletSrc.includes('new PopupManager('), 'must create PopupManager');
     });
 
+    it('creates overflow UI at init via ensureOverflowUI', () => {
+        assert.ok(appletSrc.includes('_popup.ensureOverflowUI()'), 'must call ensureOverflowUI during init');
+    });
+
     it('uses xappProxyToId from helpers', () => {
         assert.ok(appletSrc.includes('xappProxyToId'), 'must use xappProxyToId');
     });

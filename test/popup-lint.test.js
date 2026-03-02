@@ -54,14 +54,6 @@ describe('popup-manager.js structure', () => {
         assert.ok(popupSrc.includes('onCapturedEvent('), 'missing onCapturedEvent');
     });
 
-    it('has addChevronToApplet method', () => {
-        assert.ok(popupSrc.includes('addChevronToApplet()'), 'missing addChevronToApplet');
-    });
-
-    it('has removeChevron method', () => {
-        assert.ok(popupSrc.includes('removeChevron()'), 'missing removeChevron');
-    });
-
     it('has isOpen accessor', () => {
         assert.ok(popupSrc.includes('isOpen()'), 'missing isOpen');
     });
@@ -72,7 +64,6 @@ describe('popup-manager.js structure', () => {
         assert.ok(popupSrc.includes('get inactiveSection()'), 'missing inactiveSection accessor');
         assert.ok(popupSrc.includes('get inactiveLabel()'), 'missing inactiveLabel accessor');
         assert.ok(popupSrc.includes('get panel()'), 'missing panel accessor');
-        assert.ok(popupSrc.includes('get overflowIndicator()'), 'missing overflowIndicator accessor');
     });
 });
 
@@ -107,11 +98,11 @@ describe('popup-manager.js overflow UI', () => {
 });
 
 describe('popup-manager.js chevron and positioning', () => {
-    it('adds chevron to applet.actor', () => {
-        let methodStart = popupSrc.indexOf('addChevronToApplet() {');
-        assert.ok(methodStart > 0, 'addChevronToApplet not found');
-        let method = popupSrc.substring(methodStart, methodStart + 400);
-        assert.ok(method.includes('applet.actor'), 'must add chevron to applet.actor');
+    it('adds chevron to applet.actor in ensureOverflowUI', () => {
+        let methodStart = popupSrc.indexOf('ensureOverflowUI() {');
+        assert.ok(methodStart > 0, 'ensureOverflowUI not found');
+        let method = popupSrc.substring(methodStart, methodStart + 800);
+        assert.ok(method.includes('applet.actor.add_actor'), 'must add chevron to applet.actor');
     });
 
     it('anchors popup position on chevron', () => {
@@ -130,46 +121,61 @@ describe('popup-manager.js populate/depopulate', () => {
     it('uses clones for all icons (both sections)', () => {
         let methodStart = popupSrc.indexOf('populatePopup() {');
         assert.ok(methodStart > 0, 'populatePopup not found');
-        let method = popupSrc.substring(methodStart, methodStart + 1500);
+        let method = popupSrc.substring(methodStart, methodStart + 1800);
         assert.ok(method.includes('Clutter.Clone'), 'must use Clutter.Clone');
         assert.ok(method.includes('_managedIconRef'), 'clones must be tagged');
         assert.ok(method.includes('_popupClones'), 'must track clones');
-        assert.ok(method.includes('visible = true'), 'must make hidden icons visible for clones');
+    });
+
+    it('moves overflow icons to off-screen container for cloning', () => {
+        let methodStart = popupSrc.indexOf('populatePopup() {');
+        assert.ok(methodStart > 0, 'populatePopup not found');
+        let method = popupSrc.substring(methodStart, methodStart + 1800);
+        assert.ok(method.includes('_cloneSourceBox'), 'must use off-screen clone source box');
+        assert.ok(method.includes('set_position(-10000'), 'must position off-screen');
+        assert.ok(method.includes('visible = true'), 'must set overflow icons visible for clone painting');
     });
 
     it('has try/catch for clone creation (Phase 1C)', () => {
         let methodStart = popupSrc.indexOf('populatePopup() {');
         assert.ok(methodStart > 0, 'populatePopup not found');
-        let method = popupSrc.substring(methodStart, methodStart + 1500);
+        let method = popupSrc.substring(methodStart, methodStart + 1800);
         assert.ok(method.includes('try {') || method.includes('try{'), 'must have try/catch');
     });
 
     it('checks is_finalized before cloning (Phase 1C)', () => {
         let methodStart = popupSrc.indexOf('populatePopup() {');
         assert.ok(methodStart > 0, 'populatePopup not found');
-        let method = popupSrc.substring(methodStart, methodStart + 1500);
+        let method = popupSrc.substring(methodStart, methodStart + 1800);
         assert.ok(method.includes('is_finalized'), 'must check is_finalized');
     });
 
     it('has explicit cellSize for consistent FlowLayout', () => {
         let methodStart = popupSrc.indexOf('populatePopup() {');
         assert.ok(methodStart > 0, 'populatePopup not found');
-        let method = popupSrc.substring(methodStart, methodStart + 1500);
+        let method = popupSrc.substring(methodStart, methodStart + 1800);
         assert.ok(method.includes('cellSize'), 'must use cellSize');
         assert.ok(method.includes('set_size'), 'must set explicit size on clones');
+    });
+
+    it('depopulate returns overflow icons from off-screen container', () => {
+        let methodStart = popupSrc.indexOf('depopulatePopup() {');
+        assert.ok(methodStart > 0, 'depopulatePopup not found');
+        let method = popupSrc.substring(methodStart, methodStart + 1000);
+        assert.ok(method.includes('_cloneSourceBox'), 'must clean up off-screen container');
     });
 
     it('depopulate has try/catch for clone destroy (Phase 1C)', () => {
         let methodStart = popupSrc.indexOf('depopulatePopup() {');
         assert.ok(methodStart > 0, 'depopulatePopup not found');
-        let method = popupSrc.substring(methodStart, methodStart + 600);
+        let method = popupSrc.substring(methodStart, methodStart + 1000);
         assert.ok(method.includes('try') || method.includes('catch'), 'must have try/catch');
     });
 
     it('depopulate destroys clones', () => {
         let methodStart = popupSrc.indexOf('depopulatePopup() {');
         assert.ok(methodStart > 0, 'depopulatePopup not found');
-        let method = popupSrc.substring(methodStart, methodStart + 600);
+        let method = popupSrc.substring(methodStart, methodStart + 1000);
         assert.ok(method.includes('_popupClones'), 'must clean up popup clones');
         assert.ok(method.includes('.destroy()'), 'must destroy clones');
     });

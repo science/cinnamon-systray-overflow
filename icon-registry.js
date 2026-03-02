@@ -71,12 +71,6 @@ var IconRegistry = class IconRegistry {
         if (this.applet._recording_indicator) {
             this.applet._panelBox.set_child_at_index(this.applet._recording_indicator.actor, -1);
         }
-
-        // Always show chevron so users can open popup and drag icons to overflow
-        this.applet._popup.ensureOverflowUI();
-        if (this.applet._popup.overflowIndicator) {
-            this.applet._popup.overflowIndicator.show();
-        }
     }
 
     /**

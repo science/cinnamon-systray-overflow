@@ -24,6 +24,7 @@ var PopupManager = class PopupManager {
         this._overflowModalPushed = false;
         this._capturedEventId = 0;
         this._popupClones = [];
+        this._cloneSourceBox = null;
     }
 
     /**
@@ -41,31 +42,6 @@ var PopupManager = class PopupManager {
     get inactiveSection() { return this._overflowInactiveSection; }
     get inactiveLabel() { return this._overflowInactiveLabel; }
     get panel() { return this._overflowPanel; }
-    get overflowIndicator() { return this._overflowIndicator; }
-
-    /**
-     * Add the chevron button as a direct child of applet.actor (sibling of _panelBox).
-     * This keeps it outside _panelBox so sortXAppIcons/insert_child_at_index can't displace it.
-     */
-    addChevronToApplet() {
-        if (!this._overflowIndicator) return;
-        let parent = this._overflowIndicator.get_parent();
-        if (parent === this.applet.actor) return; // already there
-        if (parent) parent.remove_child(this._overflowIndicator);
-        this.applet.actor.add_actor(this._overflowIndicator);
-    }
-
-    /**
-     * Remove the chevron button from whatever parent it's in.
-     */
-    removeChevron() {
-        if (!this._overflowIndicator) return;
-        let parent = this._overflowIndicator.get_parent();
-        if (parent) {
-            parent.remove_child(this._overflowIndicator);
-        }
-    }
-
     /**
      * Create the overflow UI: chevron button + popup panel with sections.
      */
@@ -87,7 +63,7 @@ var PopupManager = class PopupManager {
         });
         this._overflowIndicator.set_child(chevronIcon);
         this._overflowIndicator.connect('clicked', () => this.togglePanel());
-        this.addChevronToApplet();
+        this.applet.actor.add_actor(this._overflowIndicator);
 
         // Overflow popup panel on global.stage
         this._overflowPanel = new St.Bin({
@@ -179,8 +155,14 @@ var PopupManager = class PopupManager {
         this._overflowOverflowSection = null;
         this._overflowInactiveSection = null;
         this._overflowInactiveLabel = null;
+        if (this._cloneSourceBox) {
+            global.stage.remove_child(this._cloneSourceBox);
+            this._cloneSourceBox.destroy();
+            this._cloneSourceBox = null;
+        }
         if (this._overflowIndicator) {
-            this.removeChevron();
+            let parent = this._overflowIndicator.get_parent();
+            if (parent) parent.remove_child(this._overflowIndicator);
             this._overflowIndicator.destroy();
             this._overflowIndicator = null;
         }
@@ -295,8 +277,15 @@ var PopupManager = class PopupManager {
             this.applet.iconOrder || []
         );
 
-        // Make hidden icons visible for clones to paint
+        // Move overflow icons to off-screen container — mapped for clone painting
+        // but not in _panelBox, so they don't flash visible in the panel
+        this._cloneSourceBox = new St.BoxLayout({ visible: true });
+        this._cloneSourceBox.set_position(-10000, -10000);
+        global.stage.add_child(this._cloneSourceBox);
         for (let managed of overflow) {
+            let parent = managed.actor.get_parent();
+            if (parent) parent.remove_child(managed.actor);
+            this._cloneSourceBox.add_actor(managed.actor);
             managed.actor.visible = true;
         }
 
@@ -340,6 +329,19 @@ var PopupManager = class PopupManager {
      */
     depopulatePopup() {
         this.applet._sysProxy.depopulateSystemApplets();
+
+        // Return overflow icons from off-screen container to panelBox
+        if (this._cloneSourceBox) {
+            let children = [...this._cloneSourceBox.get_children()];
+            for (let child of children) {
+                this._cloneSourceBox.remove_child(child);
+                child.visible = false;
+                this.applet._panelBox.add_actor(child);
+            }
+            global.stage.remove_child(this._cloneSourceBox);
+            this._cloneSourceBox.destroy();
+            this._cloneSourceBox = null;
+        }
 
         if (this._popupClones) {
             for (let clone of this._popupClones) {

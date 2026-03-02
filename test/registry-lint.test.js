@@ -68,11 +68,12 @@ describe('icon-registry.js redistributeIcons', () => {
         assert.ok(method.includes('visible = false'), 'must set overflow icons hidden');
     });
 
-    it('always ensures overflow UI exists', () => {
+    it('does not manage chevron (handled by applet init)', () => {
         let methodStart = registrySrc.indexOf('redistributeIcons()');
         assert.ok(methodStart > 0, 'redistributeIcons not found');
         let method = registrySrc.substring(methodStart, methodStart + 2500);
-        assert.ok(method.includes('_popup.ensureOverflowUI'), 'must always ensure overflow UI exists');
+        assert.ok(!method.includes('ensureOverflowUI'), 'must not call ensureOverflowUI (created at init)');
+        assert.ok(!method.includes('overflowIndicator'), 'must not reference overflowIndicator');
     });
 });
 

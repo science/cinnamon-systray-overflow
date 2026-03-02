@@ -56,8 +56,9 @@ vm_dconf_write() {
 }
 
 vm_eval() {
-    vm_run "dbus-send --session --print-reply --dest=org.Cinnamon \
-        /org/Cinnamon org.Cinnamon.Eval string:'$1'" 2>/dev/null \
+    local js="$1"
+    vm_ssh "DISPLAY=:0 dbus-send --session --print-reply --dest=org.Cinnamon \
+        /org/Cinnamon org.Cinnamon.Eval string:\"$js\"" 2>/dev/null \
         | grep -oP 'string "\K[^"]*' || echo ""
 }
 
@@ -188,8 +189,23 @@ else
 import sys, ast
 applets = ast.literal_eval(sys.stdin.read().strip())
 applets = [a for a in applets if '$STOCK_SYSTRAY' not in a and '$STOCK_XAPP' not in a and '$UUID' not in a]
-applets.append('panel1:right:24:$UUID:3')
-print(applets)
+# Find calendar position and insert just before it
+cal_pos = None
+for a in applets:
+    if 'calendar@cinnamon.org' in a:
+        parts = a.split(':')
+        cal_pos = int(parts[2])
+        break
+our_pos = cal_pos if cal_pos is not None else 99
+# Bump calendar and anything at/after our position up by 1
+new_applets = []
+for a in applets:
+    parts = a.split(':')
+    if len(parts) >= 3 and parts[1] == 'right' and int(parts[2]) >= our_pos:
+        parts[2] = str(int(parts[2]) + 1)
+    new_applets.append(':'.join(parts))
+new_applets.append('panel1:right:' + str(our_pos) + ':$UUID:3')
+print(new_applets)
 ")
     vm_dconf_write /org/cinnamon/enabled-applets "$UPDATED"
     echo -e "  ${GREEN}dconf updated${NC} (removed stock, added ours)"
