@@ -165,3 +165,86 @@ describe('system-applet-proxy.js forwardScrollToSystemApplet', () => {
         assert.ok(method.includes('_onScrollEvent'), 'must call _onScrollEvent');
     });
 });
+
+describe('system-applet-proxy.js visibility guards', () => {
+    it('initializes _visibilityGuards in constructor', () => {
+        let ctorStart = sysProxySrc.indexOf('constructor(applet) {');
+        assert.ok(ctorStart > 0, 'constructor not found');
+        let ctor = sysProxySrc.substring(ctorStart, ctorStart + 400);
+        assert.ok(ctor.includes('_visibilityGuards'), 'must initialize _visibilityGuards');
+    });
+
+    it('has _connectVisibilityGuard method with notify::visible signal', () => {
+        let methodStart = sysProxySrc.indexOf('_connectVisibilityGuard(uuid, instance) {');
+        assert.ok(methodStart > 0, '_connectVisibilityGuard not found');
+        let method = sysProxySrc.substring(methodStart, methodStart + 800);
+        assert.ok(method.includes("'notify::visible'"), 'must connect notify::visible signal');
+        assert.ok(method.includes('actor.visible = false'), 'must re-hide when guard fires');
+        assert.ok(method.includes('cooldownId'), 'must have cooldown to prevent slap fights');
+    });
+
+    it('has _disconnectVisibilityGuard method that cleans up cooldown', () => {
+        let methodStart = sysProxySrc.indexOf('_disconnectVisibilityGuard(uuid) {');
+        assert.ok(methodStart > 0, '_disconnectVisibilityGuard not found');
+        let method = sysProxySrc.substring(methodStart, methodStart + 400);
+        assert.ok(method.includes('source_remove'), 'must clean up cooldown timer');
+        assert.ok(method.includes('disconnect'), 'must disconnect signal');
+    });
+
+    it('has disconnectAllGuards method', () => {
+        assert.ok(sysProxySrc.includes('disconnectAllGuards()'), 'must have disconnectAllGuards');
+        let methodStart = sysProxySrc.indexOf('disconnectAllGuards() {');
+        let method = sysProxySrc.substring(methodStart, methodStart + 300);
+        assert.ok(method.includes('_disconnectVisibilityGuard'), 'must disconnect each guard');
+        assert.ok(method.includes('stopPeriodicScan'), 'must stop periodic scan');
+    });
+
+    it('hideSystemApplet connects visibility guard', () => {
+        let methodStart = sysProxySrc.indexOf('hideSystemApplet(uuid) {');
+        assert.ok(methodStart > 0, 'hideSystemApplet not found');
+        let method = sysProxySrc.substring(methodStart, methodStart + 600);
+        assert.ok(method.includes('_connectVisibilityGuard'), 'must connect guard after hiding');
+    });
+
+    it('showSystemApplet disconnects visibility guard', () => {
+        let methodStart = sysProxySrc.indexOf('showSystemApplet(uuid) {');
+        assert.ok(methodStart > 0, 'showSystemApplet not found');
+        let method = sysProxySrc.substring(methodStart, methodStart + 600);
+        assert.ok(method.includes('_disconnectVisibilityGuard'), 'must disconnect guard when showing');
+    });
+
+    it('restoreHiddenState connects guards for each hidden applet', () => {
+        let methodStart = sysProxySrc.indexOf('restoreHiddenState() {');
+        assert.ok(methodStart > 0, 'restoreHiddenState not found');
+        let method = sysProxySrc.substring(methodStart, methodStart + 1400);
+        assert.ok(method.includes('_connectVisibilityGuard'), 'must connect guards during restore');
+        assert.ok(method.includes('startPeriodicScan'), 'must start periodic scan after restore');
+    });
+});
+
+describe('system-applet-proxy.js periodic scan', () => {
+    it('has enforceHiddenState method', () => {
+        let methodStart = sysProxySrc.indexOf('enforceHiddenState() {');
+        assert.ok(methodStart > 0, 'enforceHiddenState not found');
+        let method = sysProxySrc.substring(methodStart, methodStart + 600);
+        assert.ok(method.includes('disabledApplets'), 'must check disabled applets');
+        assert.ok(method.includes('actor.visible'), 'must enforce actor visibility');
+        assert.ok(method.includes('_connectVisibilityGuard'), 'must reconnect stale guards');
+    });
+
+    it('has startPeriodicScan method', () => {
+        let methodStart = sysProxySrc.indexOf('startPeriodicScan() {');
+        assert.ok(methodStart > 0, 'startPeriodicScan not found');
+        let method = sysProxySrc.substring(methodStart, methodStart + 300);
+        assert.ok(method.includes('timeout_add_seconds'), 'must use timeout_add_seconds');
+        assert.ok(method.includes('enforceHiddenState'), 'must call enforceHiddenState');
+        assert.ok(method.includes('SOURCE_CONTINUE'), 'must repeat');
+    });
+
+    it('has stopPeriodicScan method', () => {
+        let methodStart = sysProxySrc.indexOf('stopPeriodicScan() {');
+        assert.ok(methodStart > 0, 'stopPeriodicScan not found');
+        let method = sysProxySrc.substring(methodStart, methodStart + 200);
+        assert.ok(method.includes('source_remove'), 'must remove interval');
+    });
+});

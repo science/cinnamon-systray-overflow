@@ -197,11 +197,21 @@ class XAppStatusIcon {
     }
 
     setVisible(visible) {
-        if (visible) {
-            this.actor.show();
-        } else {
-            this.actor.hide();
+        if (this.applet._popup.isOpen()) return;
+
+        let iconId = null;
+        for (let [id, managed] of this.applet._registry) {
+            if (managed.protocol === 'xapp' && managed.xappIcon === this) {
+                iconId = id;
+                break;
+            }
         }
+
+        this.actor.visible = helpers.resolveVisibility(
+            visible, iconId,
+            this.applet.iconVisibility,
+            this.applet.defaultVisibility
+        );
     }
 
     onEnterEvent(actor, event) {
@@ -501,6 +511,9 @@ class SystrayOverflowApplet extends Applet.Applet {
             this._recording_indicator.actor.destroy();
             this._recording_indicator = null;
         }
+
+        // Disconnect all visibility guards and periodic scan
+        this._sysProxy.disconnectAllGuards();
 
         // Clear managed icons map
         this._registry.clear();

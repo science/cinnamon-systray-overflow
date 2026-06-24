@@ -2,7 +2,7 @@ const { describe, it } = require('node:test');
 const assert = require('node:assert/strict');
 const { classifyIcons, xappProxyToId, dropTargetSection, calcOverflowPanelPosition,
         exceedsDragThreshold, findClosestIconIndex, reorderIcon,
-        calcSectionHeight, calcPopupHeight, DND_STATE, dndTransition } = require('../helpers');
+        calcSectionHeight, calcPopupHeight, DND_STATE, dndTransition, resolveVisibility } = require('../helpers');
 
 describe('classifyIcons', () => {
     it('puts all icons in panel when no prefs and default is panel', () => {
@@ -389,5 +389,40 @@ describe('calcPopupHeight', () => {
 
     it('returns just padding for empty popup', () => {
         assert.equal(calcPopupHeight([], 0, 18, 6, 16), 16);
+    });
+});
+
+describe('resolveVisibility', () => {
+    it('returns false when proxy is not visible', () => {
+        assert.equal(resolveVisibility(false, 'blueman', { blueman: 'panel' }, 'panel'), false);
+    });
+
+    it('returns true when proxy is visible and classified as panel', () => {
+        assert.equal(resolveVisibility(true, 'blueman', { blueman: 'panel' }, 'panel'), true);
+    });
+
+    it('returns false when proxy is visible but classified as overflow', () => {
+        assert.equal(resolveVisibility(true, 'blueman', { blueman: 'overflow' }, 'panel'), false);
+    });
+
+    it('falls back to defaultVis when iconId not in prefs', () => {
+        assert.equal(resolveVisibility(true, 'unknown', {}, 'panel'), true);
+        assert.equal(resolveVisibility(true, 'unknown', {}, 'overflow'), false);
+    });
+
+    it('falls back to panel when defaultVis is undefined', () => {
+        assert.equal(resolveVisibility(true, 'test', {}, undefined), true);
+    });
+
+    it('handles null iconId (not yet registered)', () => {
+        assert.equal(resolveVisibility(true, null, { blueman: 'overflow' }, 'panel'), true);
+    });
+
+    it('handles null prefs', () => {
+        assert.equal(resolveVisibility(true, 'test', null, 'panel'), true);
+    });
+
+    it('returns false when proxy not visible even if classified as panel', () => {
+        assert.equal(resolveVisibility(false, 'test', {}, 'panel'), false);
     });
 });

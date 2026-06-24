@@ -239,6 +239,40 @@ describe('applet.js DND state machine (Phase 1A)', () => {
     });
 });
 
+describe('applet.js XApp setVisible respects icon classification', () => {
+    it('setVisible uses helpers.resolveVisibility', () => {
+        let methodStart = appletSrc.indexOf('setVisible(visible) {');
+        assert.ok(methodStart > 0, 'setVisible not found');
+        let method = appletSrc.substring(methodStart, methodStart + 600);
+        assert.ok(method.includes('resolveVisibility'), 'must use resolveVisibility from helpers');
+    });
+
+    it('setVisible checks popup state before modifying visibility', () => {
+        let methodStart = appletSrc.indexOf('setVisible(visible) {');
+        assert.ok(methodStart > 0, 'setVisible not found');
+        let method = appletSrc.substring(methodStart, methodStart + 600);
+        assert.ok(method.includes('_popup.isOpen()'), 'must check popup state');
+    });
+
+    it('setVisible looks up iconId from registry', () => {
+        let methodStart = appletSrc.indexOf('setVisible(visible) {');
+        assert.ok(methodStart > 0, 'setVisible not found');
+        let method = appletSrc.substring(methodStart, methodStart + 600);
+        assert.ok(method.includes('_registry'), 'must look up icon in registry');
+        assert.ok(method.includes('iconVisibility'), 'must pass iconVisibility prefs');
+        assert.ok(method.includes('defaultVisibility'), 'must pass defaultVisibility');
+    });
+});
+
+describe('applet.js cleanup disconnects visibility guards', () => {
+    it('calls disconnectAllGuards on removal', () => {
+        let methodStart = appletSrc.indexOf('on_applet_removed_from_panel() {');
+        assert.ok(methodStart > 0, 'on_applet_removed_from_panel not found');
+        let method = appletSrc.substring(methodStart, methodStart + 1800);
+        assert.ok(method.includes('disconnectAllGuards'), 'must disconnect visibility guards on removal');
+    });
+});
+
 describe('applet.js signal handler guards during popup (Phase 1D)', () => {
     it('_onBeforeRedisplay defers during popup', () => {
         let methodStart = appletSrc.indexOf('_onBeforeRedisplay() {');

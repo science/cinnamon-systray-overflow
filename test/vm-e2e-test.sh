@@ -460,6 +460,12 @@ else
         sleep 0.5
     fi
 fi
+
+# Dismiss any tray app menu that opened from the forwarded click.
+# GTK menus take an X11 grab that prevents pushModal in later scenarios.
+xtest_key "Escape" >/dev/null 2>&1
+sleep 0.3
+
 echo ""
 
 # ═══════════════════════════════════════════

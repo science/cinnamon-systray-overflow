@@ -6,6 +6,8 @@
 var St = imports.gi.St;
 var Main = imports.ui.main;
 var Clutter = imports.gi.Clutter;
+var GLib = imports.gi.GLib;
+var Mainloop = imports.mainloop;
 
 // System applet UUIDs we can manage via proxy icons in the overflow popup
 // network@cinnamon.org excluded: it auto-repairs when disabled, creating phantom icons
@@ -24,6 +26,8 @@ var SystemAppletProxy = class SystemAppletProxy {
         this.applet = applet;
         this._pendingDisables = {};
         this._pendingEnables = {};
+        this._visibilityGuards = {};
+        this._scanIntervalId = 0;
     }
 
     /**
@@ -259,6 +263,7 @@ var SystemAppletProxy = class SystemAppletProxy {
         if (instances.length > 0) {
             iconName = this.getAppletIconName(instances[0]);
             instances[0].actor.visible = false;
+            this._connectVisibilityGuard(uuid, instances[0]);
         }
         let hidden = this.applet.disabledApplets || {};
         hidden[uuid] = { iconName: iconName };
@@ -269,6 +274,7 @@ var SystemAppletProxy = class SystemAppletProxy {
      * Show a previously hidden system applet by restoring actor.visible = true.
      */
     showSystemApplet(uuid) {
+        this._disconnectVisibilityGuard(uuid);
         let instances = Main.AppletManager.getRunningInstancesForUuid(uuid);
         if (instances.length > 0) {
             instances[0].actor.visible = true;
@@ -285,6 +291,93 @@ var SystemAppletProxy = class SystemAppletProxy {
         let instances = Main.AppletManager.getRunningInstancesForUuid(uuid);
         if (instances.length > 0 && instances[0]._onScrollEvent) {
             instances[0]._onScrollEvent(instances[0].actor, event);
+        }
+    }
+
+    /**
+     * Connect a notify::visible guard on a hidden system applet's actor.
+     * When the applet makes itself visible while still in disabledApplets,
+     * the guard sets it back to false. A 3-second cooldown prevents CPU-eating
+     * slap fights with aggressive applets.
+     */
+    _connectVisibilityGuard(uuid, instance) {
+        this._disconnectVisibilityGuard(uuid);
+        let guard = { instance: instance, signalId: null, cooldownId: 0 };
+
+        guard.signalId = instance.actor.connect('notify::visible', () => {
+            let hidden = this.applet.disabledApplets || {};
+            if (!instance.actor.visible || !hidden[uuid]) return;
+            if (guard.cooldownId) return;
+
+            instance.actor.visible = false;
+            guard.cooldownId = Mainloop.timeout_add_seconds(3, () => {
+                guard.cooldownId = 0;
+                return GLib.SOURCE_REMOVE;
+            });
+        });
+        this._visibilityGuards[uuid] = guard;
+    }
+
+    /**
+     * Disconnect a visibility guard for a system applet.
+     */
+    _disconnectVisibilityGuard(uuid) {
+        if (!this._visibilityGuards[uuid]) return;
+        let guard = this._visibilityGuards[uuid];
+        if (guard.cooldownId) Mainloop.source_remove(guard.cooldownId);
+        try { guard.instance.actor.disconnect(guard.signalId); } catch (e) {}
+        delete this._visibilityGuards[uuid];
+    }
+
+    /**
+     * Disconnect all visibility guards. Called on applet removal.
+     */
+    disconnectAllGuards() {
+        for (let uuid in this._visibilityGuards) {
+            this._disconnectVisibilityGuard(uuid);
+        }
+        this.stopPeriodicScan();
+    }
+
+    /**
+     * Periodic scan: enforce hidden state and reconnect stale guards.
+     * Handles edge cases like applet reload mid-session where the
+     * original guard references a stale actor instance.
+     */
+    enforceHiddenState() {
+        let hidden = this.applet.disabledApplets || {};
+        for (let uuid in hidden) {
+            let instances = Main.AppletManager.getRunningInstancesForUuid(uuid);
+            if (instances.length === 0) continue;
+            let instance = instances[0];
+            if (instance.actor.visible) {
+                instance.actor.visible = false;
+            }
+            if (!this._visibilityGuards[uuid] ||
+                this._visibilityGuards[uuid].instance !== instance) {
+                this._connectVisibilityGuard(uuid, instance);
+            }
+        }
+    }
+
+    /**
+     * Start periodic scan every 30 seconds. Called after restoreHiddenState.
+     */
+    startPeriodicScan() {
+        this.stopPeriodicScan();
+        this._scanIntervalId = Mainloop.timeout_add_seconds(30, () => {
+            this.enforceHiddenState();
+            return GLib.SOURCE_CONTINUE;
+        });
+    }
+
+    /**
+     * Stop periodic scan. Called on applet removal.
+     */
+    stopPeriodicScan() {
+        if (this._scanIntervalId) {
+            Mainloop.source_remove(this._scanIntervalId);
+            this._scanIntervalId = 0;
         }
     }
 
@@ -310,9 +403,11 @@ var SystemAppletProxy = class SystemAppletProxy {
             let instances = Main.AppletManager.getRunningInstancesForUuid(uuid);
             if (instances.length > 0) {
                 instances[0].actor.visible = false;
+                this._connectVisibilityGuard(uuid, instances[0]);
             }
         }
         this.applet.settings.setValue('disabled-applets', hidden);
+        this.startPeriodicScan();
     }
 }
 

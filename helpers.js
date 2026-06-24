@@ -271,11 +271,27 @@ function dndTransition(currentState, action) {
     return { valid: false };
 }
 
+/**
+ * Resolve whether an XApp icon should be visible, considering both the
+ * proxy's visible property and the user's icon-visibility classification.
+ *
+ * @param {boolean} proxyVisible - The proxy's Visible property
+ * @param {string|null} iconId - The icon's registry ID (null if not yet registered)
+ * @param {Object} prefs - Map of icon ID -> "panel" | "overflow"
+ * @param {string} defaultVis - Default visibility: "panel" or "overflow"
+ * @returns {boolean} Whether the icon should be visible (shown in panel)
+ */
+function resolveVisibility(proxyVisible, iconId, prefs, defaultVis) {
+    if (!proxyVisible) return false;
+    let classification = (prefs && iconId && prefs[iconId]) || defaultVis || 'panel';
+    return classification === 'panel';
+}
+
 // Dual-runtime export
 if (typeof module !== 'undefined' && module.exports) {
     module.exports = {
         classifyIcons, xappProxyToId, dropTargetSection, calcOverflowPanelPosition,
         exceedsDragThreshold, findClosestIconIndex, reorderIcon,
-        calcSectionHeight, calcPopupHeight, DND_STATE, dndTransition
+        calcSectionHeight, calcPopupHeight, DND_STATE, dndTransition, resolveVisibility
     };
 }
