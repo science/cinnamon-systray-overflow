@@ -89,6 +89,49 @@ if echo "$ENABLED" | grep -q "$STOCK_XAPP_UUID"; then
     echo "    Right-click panel -> Applets -> find 'XApp Status Applet' -> Remove"
 fi
 
+# 6.5 Check the SNI/appindicator bridge (xapp-sn-watcher)
+# Modern apps (Slack, Discord, etc.) publish their tray icons via the
+# StatusNotifierItem (SNI / appindicator) protocol. Cinnamon bridges those into
+# XApp status icons — which this applet displays — using xapp-sn-watcher, which
+# must own the org.kde.StatusNotifierWatcher D-Bus name. If another service (e.g.
+# Ubuntu's indicator-application) grabs that name first, xapp-sn-watcher backs
+# off and SNI icons silently never appear. XEmbed icons are unaffected, so the
+# breakage is partial and easy to misattribute to this applet. Warn only.
+if command -v dbus-send &>/dev/null && [ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]; then
+    SNI_OWNER=$(dbus-send --session --print-reply \
+        --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+        org.freedesktop.DBus.GetNameOwner \
+        string:org.kde.StatusNotifierWatcher 2>/dev/null | awk -F'"' '/string/ {print $2}')
+    SNI_CMD=""
+    if [ -n "$SNI_OWNER" ]; then
+        SNI_PID=$(dbus-send --session --print-reply \
+            --dest=org.freedesktop.DBus /org/freedesktop/DBus \
+            org.freedesktop.DBus.GetConnectionUnixProcessID \
+            string:"$SNI_OWNER" 2>/dev/null | awk '/uint32/ {print $2}')
+        [ -n "$SNI_PID" ] && SNI_CMD=$(tr '\0' ' ' < "/proc/$SNI_PID/cmdline" 2>/dev/null)
+    fi
+    if echo "$SNI_CMD" | grep -q 'xapp-sn-watcher'; then
+        echo "  SNI bridge (xapp-sn-watcher): OK"
+    else
+        echo ""
+        echo "WARNING: Cinnamon's SNI bridge (xapp-sn-watcher) is not active."
+        if [ -z "$SNI_OWNER" ]; then
+            echo "  Nothing owns org.kde.StatusNotifierWatcher — appindicator apps"
+            echo "  (Slack, Discord, etc.) will NOT show their tray icons here."
+            echo "  Start it with: systemctl --user start 'app-xapp\\x2dsn\\x2dwatcher@autostart.service'"
+        else
+            echo "  org.kde.StatusNotifierWatcher is held by another service:"
+            echo "    ${SNI_CMD:-pid $SNI_PID}"
+            echo "  This blocks xapp-sn-watcher, so appindicator apps (Slack, Discord)"
+            echo "  won't appear. Common culprit: Ubuntu's indicator-application."
+            echo "  Fix: stop/disable that service so xapp-sn-watcher can own the name"
+            echo "  (e.g. a Hidden=true override in ~/.config/autostart/), then re-login."
+        fi
+        echo "  NOTE: This is an environment issue, not a fault in this applet —"
+        echo "  XEmbed icons (e.g. PasswordSafe) still work without the bridge."
+    fi
+fi
+
 # 7. Check if our applet is already in enabled-applets
 if echo "$ENABLED" | grep -q "$UUID"; then
     echo "  Already in enabled-applets"
